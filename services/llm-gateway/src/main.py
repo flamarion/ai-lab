@@ -99,7 +99,15 @@ async def list_models():
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
+    # Auto model selection: use request model, env default, or first available from Ollama
     model = request.model or settings.OLLAMA_MODEL
+    if not request.model and not os.getenv("OLLAMA_MODEL"):
+        try:
+            available = await client.list_models()
+            if available:
+                model = available[0]["name"]
+        except Exception:
+            pass  # fall back to hardcoded default
     conversation_id = request.conversation_id or str(uuid.uuid4())
 
     # Build message history
