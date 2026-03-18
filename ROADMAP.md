@@ -3,17 +3,51 @@
 Goal: Build a mini AI platform from scratch, learning end-to-end AI system design.
 End goal: An agentic system running on homelab infrastructure.
 
+## Current Architecture
+
+```
+┌─── ai-app VM (Proxmox) ──────────────────────────────────┐
+│                                                           │
+│  ┌──────────┐    HTTP     ┌──────────────────────────┐   │
+│  │ Chat UI  │────────────▶│      LLM Gateway         │   │
+│  │ :8501    │◀────────────│      :8000               │   │
+│  └──────────┘             │                          │   │
+│                           │  • /chat (+ system prompt,│   │
+│                           │    top_p, num_predict)    │   │
+│                           │  • /models               │   │
+│                           │  • /conversations        │   │
+│                           └──────┬───────────┬───────┘   │
+│                                  │           │           │
+└──────────────────────────────────┼───────────┼───────────┘
+                                   │           │
+                            LAN    │           │  LAN
+                                   ▼           ▼
+┌─── mato (GPU PC) ────────────┐  ┌─── ai-data VM ────────┐
+│                               │  │                        │
+│  Ollama :11434                │  │  Postgres :5432        │
+│  ├── mistral:7b               │  │  ├── conversations     │
+│  ├── qwen3.5:latest           │  │  └── messages          │
+│  └── llama3:latest            │  │                        │
+│                               │  │  Qdrant :6333  (P4)    │
+│  RTX 3060 12GB + GTX 1650 4GB│  │                        │
+│  Flash attn, q8 KV, 16k ctx  │  │                        │
+└───────────────────────────────┘  └────────────────────────┘
+```
+
 ## Architecture Target
 
 ```
-You → Chat UI → LLM Gateway → Ollama (GPU PC)
-                    ↓    ↑
-               Tool Layer (APIs, DB, search)
-                    ↓
-              Agent Orchestrator
-               ↓         ↓
-         Qdrant        Postgres
-       (vectors)       (state)
+Chat UI ──▶ LLM Gateway ──▶ Ollama (GPU PC)
+                │    ▲
+                │    │ context
+                ▼    │
+            Tool Layer (APIs, DB, vector search)
+                │
+                ▼
+          Agent Orchestrator
+           ▼         ▼
+     Qdrant        Postgres
+   (vectors)       (state)
 ```
 
 ## Phases
@@ -92,11 +126,37 @@ You → Chat UI → LLM Gateway → Ollama (GPU PC)
 
 ### Phase 4 — RAG Pipeline
 **What you'll build:** Document ingestion → chunking → embedding → retrieval → augmented generation
+
+```
+Phase 4 data flow:
+
+  your docs                    user question
+  (PDF, md, txt)               "what does X say about Y?"
+       │                              │
+       ▼                              ▼
+┌─────────────┐              ┌──────────────┐
+│  Ingestion  │              │  LLM Gateway │
+│  Pipeline   │              │              │
+│ load → chunk│              │  1. embed    │
+│ → embed     │              │     question │
+│ → store     │              │  2. search   │──▶ Qdrant
+└──────┬──────┘              │     Qdrant   │◀── top-k chunks
+       │                     │  3. build    │
+       ▼                     │     prompt   │
+    Qdrant                   │  4. call     │──▶ Ollama
+    (vectors)                │     Ollama   │◀── answer
+                             └──────────────┘
+
+Embedding model: nomic-embed-text-v2-moe (958MB, MoE, 768 dims)
+Vector store:    Qdrant (Docker on ai-data VM)
+```
+
 **What you'll learn:**
 - How LLMs get grounded in real data (not just training knowledge)
-- Chunking strategies and why they matter
-- Embedding models and similarity search
-- Prompt engineering with retrieved context
+- Chunking strategies and why they matter (size, overlap, boundaries)
+- Embedding models — how "meaning" becomes a vector of numbers
+- Similarity search — cosine distance finds semantically related content
+- Prompt engineering with retrieved context (the RAG prompt template)
 - The difference between "knows everything" and "can look things up"
 
 ---
