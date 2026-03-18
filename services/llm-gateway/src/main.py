@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -12,6 +13,7 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
     sys.path.insert(0, _shared_path)
 
 from ai_lab_common.config import settings
+from src import db
 from src.ollama_client import OllamaClient
 
 logger = logging.getLogger(__name__)
@@ -22,6 +24,7 @@ client: OllamaClient | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global client
+    # --- Weave init ---
     try:
         import weave
 
@@ -42,12 +45,24 @@ async def lifespan(app: FastAPI):
         logger.info("Weave initialized — project: %s", settings.WANDB_PROJECT)
     except Exception as e:
         logger.warning("Failed to initialize Weave: %s — tracing disabled, gateway will serve requests without it.", e)
+
+    # --- Database pool init ---
+    try:
+        await db.init_pool(settings.DATABASE_URL)
+        logger.info("Database connected")
+    except Exception as e:
+        logger.warning("Failed to connect to database: %s — conversation persistence disabled.", e)
+
     client = OllamaClient(settings.OLLAMA_HOST)
     yield
     await client.close()
+    await db.close_pool()
 
 
 app = FastAPI(title="AI Lab - LLM Gateway", lifespan=lifespan)
+
+
+# --- Models ---
 
 
 class ChatRequest(BaseModel):
@@ -55,16 +70,21 @@ class ChatRequest(BaseModel):
     model: str | None = None
     temperature: float = 0.7
     history: list[dict] = []
+    conversation_id: str | None = None
 
 
 class ChatResponse(BaseModel):
     response: str
     model: str
+    conversation_id: str
+
+
+# --- Endpoints ---
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "database": db.is_available()}
 
 
 @app.get("/models")
@@ -79,9 +99,20 @@ async def list_models():
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     model = request.model or settings.OLLAMA_MODEL
-    messages = list(request.history)
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+
+    # Build message history
+    if request.conversation_id and db.is_available():
+        # Existing conversation — load history from DB (ignore client-sent history)
+        stored = await db.get_messages(conversation_id)
+        messages = [{"role": m["role"], "content": m["content"]} for m in stored]
+    else:
+        # New conversation or DB unavailable — use client-sent history
+        messages = list(request.history)
+
     messages.append({"role": "user", "content": request.message})
 
+    # Call Ollama
     try:
         response_text = await client.chat(
             model=model,
@@ -91,7 +122,46 @@ async def chat(request: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Ollama error: {e}")
 
-    return ChatResponse(response=response_text, model=model)
+    # Persist to DB if available
+    if db.is_available():
+        try:
+            title = request.message[:80] if not request.conversation_id else ""
+            await db.upsert_conversation(conversation_id, model, title)
+            await db.add_message(conversation_id, "user", request.message)
+            await db.add_message(conversation_id, "assistant", response_text)
+        except Exception as e:
+            logger.warning("Failed to persist conversation: %s", e)
+
+    return ChatResponse(response=response_text, model=model, conversation_id=conversation_id)
+
+
+@app.get("/conversations")
+async def list_conversations():
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    conversations = await db.list_conversations()
+    return {"conversations": conversations}
+
+
+@app.get("/conversations/{conversation_id}")
+async def get_conversation(conversation_id: str):
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    meta = await db.get_conversation(conversation_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    messages = await db.get_messages(conversation_id)
+    return {**meta, "messages": messages}
+
+
+@app.delete("/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    deleted = await db.delete_conversation(conversation_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"status": "deleted"}
 
 
 if __name__ == "__main__":
