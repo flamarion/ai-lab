@@ -1,8 +1,8 @@
+import logging
 import os
 import sys
 from contextlib import asynccontextmanager
 
-import weave
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
@@ -14,6 +14,7 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
 from ai_lab_common.config import settings
 from src.ollama_client import OllamaClient
 
+logger = logging.getLogger(__name__)
 
 client: OllamaClient | None = None
 
@@ -21,7 +22,26 @@ client: OllamaClient | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global client
-    weave.init(settings.WANDB_PROJECT)
+    try:
+        import weave
+
+        # Workaround: weave 0.52.x passes logging.info (function) instead of
+        # logging.INFO (int) when configuring loggers during init.
+        _original_checkLevel = logging._checkLevel
+
+        def _patched_checkLevel(level):
+            if callable(level) and hasattr(level, "__name__"):
+                level = level.__name__.upper()
+            return _original_checkLevel(level)
+
+        logging._checkLevel = _patched_checkLevel
+        try:
+            weave.init(settings.WANDB_PROJECT)
+        finally:
+            logging._checkLevel = _original_checkLevel
+        logger.info("Weave initialized — project: %s", settings.WANDB_PROJECT)
+    except Exception as e:
+        logger.warning("Failed to initialize Weave: %s — tracing disabled, gateway will serve requests without it.", e)
     client = OllamaClient(settings.OLLAMA_HOST)
     yield
     await client.close()
