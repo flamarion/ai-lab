@@ -124,6 +124,16 @@ async def add_message(conversation_id: str, role: str, content: str) -> None:
     )
 
 
+async def update_conversation_title(conversation_id: str, title: str) -> None:
+    """Update the title of an existing conversation."""
+    pool = _pool_or_raise()
+    await pool.execute(
+        "UPDATE conversations SET title = $1 WHERE id = $2",
+        title[:80],
+        uuid.UUID(conversation_id),
+    )
+
+
 async def delete_conversation(conversation_id: str) -> bool:
     """Delete a conversation and its messages. Returns True if it existed."""
     pool = _pool_or_raise()
