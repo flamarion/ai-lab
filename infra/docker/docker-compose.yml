@@ -9,6 +9,7 @@ services:
       - ../../.env
     environment:
       - PYTHONPATH=/app:/app/shared/python
+      - DATABASE_URL=${DATABASE_URL:-postgresql://ailab:ailab_dev@192.168.1.202:5432/ailab}
     restart: unless-stopped
 
   chat-ui:

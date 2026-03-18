@@ -51,16 +51,24 @@ You → Chat UI → LLM Gateway → Ollama (GPU PC)
 
 ---
 
-### Phase 3 — Data Layer
-**What you'll build:** Qdrant (vector DB) + Postgres on ai-data VM
-**What you'll learn:**
-- What embeddings are and why they matter
-- Vector databases vs relational databases — when to use each
-- How to persist AI application state (conversations, user data)
-- Cross-VM service communication
+### Phase 3 — Data Layer (Postgres Conversation Persistence) ✅
+**What you built:** Postgres on ai-data VM, conversation persistence in the gateway, sidebar history in Chat UI
+**What you learned:**
+- Cross-VM service communication over LAN — same pattern as Ollama (LAN IP:port in env vars)
+- Postgres Docker initialization pattern (`/docker-entrypoint-initdb.d/` runs SQL files on first start)
+- Connection pooling with asyncpg — `min_size`/`max_size` control how many connections stay open for async reuse
+- Upsert pattern (`INSERT ... ON CONFLICT`) for idempotent operations — safe to retry without duplicates
+- Graceful degradation — gateway starts and serves requests even if Postgres is unreachable
+- Compose file split — separate compose per VM (`docker-compose.yml` for ai-app, `docker-compose.data.yml` for ai-data)
+- `ON DELETE CASCADE` — deleting a conversation automatically removes its messages, DB enforces referential integrity
 
-**Infrastructure:**
-- ai-data VM: Qdrant + Postgres
+**Key files:**
+- `infra/docker/docker-compose.data.yml` — Postgres compose for ai-data VM
+- `infra/docker/init-db/001_schema.sql` — conversations + messages schema
+- `scripts/deploy-data.sh` — deploy script for data services
+- `services/llm-gateway/src/db.py` — asyncpg connection pool and query functions
+- `services/llm-gateway/src/main.py` — /chat persistence + /conversations endpoints
+- `apps/chat-ui/app.py` — sidebar with conversation history
 
 ---
 

@@ -7,6 +7,7 @@ class Settings:
     GATEWAY_HOST: str = os.getenv("GATEWAY_HOST", "0.0.0.0")
     GATEWAY_PORT: int = int(os.getenv("GATEWAY_PORT", "8000"))
     WANDB_PROJECT: str = os.getenv("WANDB_PROJECT", "ai-lab")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://ailab:ailab_dev@192.168.1.202:5432/ailab")
 
 
 settings = Settings()
