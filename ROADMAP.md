@@ -72,6 +72,24 @@ You → Chat UI → LLM Gateway → Ollama (GPU PC)
 
 ---
 
+### Phase 3.5 — Consolidation & User Controls ✅
+**What you built:** System prompt, top_p, max tokens controls; auto model selection; Ollama tuning docs; config cleanup; unified `aictl.sh` control script
+**What you learned:**
+- Pass-through options pattern: gateway validates and builds an options dict, client transports it as-is, Ollama handles arbitrary keys. Adding a new parameter only requires a change in one place (the gateway's request model).
+- UI progressive disclosure: `st.expander("Advanced")` hides power-user controls from casual users — family members see only Model and Temperature.
+- System prompts are the simplest way to customize LLM behavior without code changes — "reply in Portuguese" or "explain like I'm 10."
+- Auto model selection: fallback chain (request → env var → first available) makes the system work without any model configuration.
+- Ollama performance tuning: flash attention + q8 KV cache quantization makes 16k context viable on 12GB VRAM.
+
+**Key files:**
+- `services/llm-gateway/src/main.py` — expanded ChatRequest, options dict builder, system prompt injection
+- `services/llm-gateway/src/ollama_client.py` — refactored to accept options dict
+- `apps/chat-ui/app.py` — Advanced expander with top_p, num_predict, system_prompt
+- `scripts/aictl.sh` — unified service control
+- `CLAUDE.md` — Ollama tuning docs
+
+---
+
 ### Phase 4 — RAG Pipeline
 **What you'll build:** Document ingestion → chunking → embedding → retrieval → augmented generation
 **What you'll learn:**

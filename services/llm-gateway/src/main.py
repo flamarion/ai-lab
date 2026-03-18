@@ -70,6 +70,9 @@ class ChatRequest(BaseModel):
     message: str
     model: str | None = None
     temperature: float = 0.7
+    top_p: float | None = None
+    num_predict: int | None = None
+    system_prompt: str | None = None
     history: list[dict] = []
     conversation_id: str | None = None
 
@@ -99,26 +102,44 @@ async def list_models():
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
+    # Auto model selection: request → env var → first available from Ollama
     model = request.model or settings.OLLAMA_MODEL
+    if not request.model and not os.getenv("OLLAMA_MODEL"):
+        try:
+            available = await client.list_models()
+            if available:
+                model = available[0]["name"]
+        except Exception:
+            pass  # fall back to hardcoded default
+
     conversation_id = request.conversation_id or str(uuid.uuid4())
 
     # Build message history
     if request.conversation_id and db.is_available():
-        # Existing conversation — load history from DB (ignore client-sent history)
         stored = await db.get_messages(conversation_id)
         messages = [{"role": m["role"], "content": m["content"]} for m in stored]
     else:
-        # New conversation or DB unavailable — use client-sent history
         messages = list(request.history)
 
+    # Inject system prompt if provided
+    if request.system_prompt and request.system_prompt.strip():
+        messages.insert(0, {"role": "system", "content": request.system_prompt.strip()})
+
     messages.append({"role": "user", "content": request.message})
+
+    # Build Ollama options (only include non-default values)
+    options: dict = {"temperature": request.temperature}
+    if request.top_p is not None:
+        options["top_p"] = request.top_p
+    if request.num_predict is not None:
+        options["num_predict"] = request.num_predict
 
     # Call Ollama
     try:
         response_text = await client.chat(
             model=model,
             messages=messages,
-            temperature=request.temperature,
+            options=options,
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Ollama error: {e}")

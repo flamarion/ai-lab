@@ -245,10 +245,35 @@ with st.sidebar:
         else:
             selected_model = selected_option
     else:
-        selected_model = st.text_input("Model", value="mistral:latest")
+        selected_model = st.text_input("Model", value="mistral:7b")
         st.warning("Could not fetch models from gateway")
 
     temperature = st.slider("Temperature", 0.0, 1.0, 0.7, 0.1)
+
+    with st.expander("Advanced"):
+        num_predict = st.slider(
+            "Max response length",
+            64,
+            4096,
+            1024,
+            64,
+            help="Limit how long the response can be (in tokens, ~0.75 words each)",
+        )
+        top_p = st.slider(
+            "Top P",
+            0.0,
+            1.0,
+            0.9,
+            0.05,
+            help="Controls diversity. Lower = more focused, higher = more creative",
+        )
+        system_prompt = st.text_area(
+            "System prompt",
+            value="",
+            height=80,
+            help="Optional instructions the model follows for every message",
+            placeholder="e.g. You are a helpful cooking assistant",
+        )
 
 # --- Main chat area ---
 
@@ -291,6 +316,12 @@ if prompt := st.chat_input("Type your message..."):
                 }
                 if selected_model:
                     payload["model"] = selected_model
+                if top_p != 0.9:
+                    payload["top_p"] = top_p
+                if num_predict != 1024:
+                    payload["num_predict"] = num_predict
+                if system_prompt.strip():
+                    payload["system_prompt"] = system_prompt
                 if st.session_state.conversation_id:
                     payload["conversation_id"] = st.session_state.conversation_id
                 else:
