@@ -238,7 +238,7 @@ with st.sidebar:
         selected_option = st.selectbox(
             "Model",
             model_options,
-            help="Auto uses the default model. Pick a specific model to override.",
+            help="Auto routes to the best model based on your message (code → qwen3.5, general → mistral). Pick a specific model to override.",
         )
         if selected_option == "Auto (recommended)":
             selected_model = None  # gateway will use its default

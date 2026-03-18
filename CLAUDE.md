@@ -136,7 +136,7 @@ Two compose files, one per VM:
 - **Graceful degradation**: Gateway starts even if Postgres or Weave are unavailable — logs a warning and serves stateless requests.
 - **Cross-VM communication**: Services discover each other via LAN IP:port in env vars (same pattern for Ollama and Postgres).
 - **Pass-through options**: The gateway validates and builds an Ollama options dict (temperature, top_p, num_predict); `OllamaClient.chat()` forwards it as-is. Adding a new Ollama option only requires a change to `ChatRequest` and the dict-building code — the client never changes.
-- **Auto model selection**: When no model is specified, the gateway tries: env var `OLLAMA_MODEL` → first available model from Ollama. No configuration required for Auto to work.
+- **Smart model routing**: When "Auto" is selected (no explicit model in request), the gateway's `router.py` classifies the prompt via keyword matching and picks the best model. Code/technical prompts route to `ROUTE_CODE_MODEL` (qwen3.5), everything else to `ROUTE_DEFAULT_MODEL` (mistral). The selected model and reason are logged for observability. Users can always override by picking a specific model in the dropdown.
 
 ## Ollama Server Tuning
 

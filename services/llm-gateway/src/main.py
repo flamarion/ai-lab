@@ -14,7 +14,7 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
     sys.path.insert(0, _shared_path)
 
 from ai_lab_common.config import settings
-from src import db
+from src import db, router
 from src.ollama_client import OllamaClient
 
 logger = logging.getLogger(__name__)
@@ -102,15 +102,13 @@ async def list_models():
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    # Auto model selection: request → env var → first available from Ollama
-    model = request.model or settings.OLLAMA_MODEL
-    if not request.model and not os.getenv("OLLAMA_MODEL"):
-        try:
-            available = await client.list_models()
-            if available:
-                model = available[0]["name"]
-        except Exception:
-            pass  # fall back to hardcoded default
+    # Model selection: explicit choice from user, or smart routing
+    if request.model:
+        model = request.model
+        logger.info("Model: %s (user selected)", model)
+    else:
+        model, reason = router.select_model(request.message)
+        logger.info("Model: %s (auto — %s)", model, reason)
 
     conversation_id = request.conversation_id or str(uuid.uuid4())
 
