@@ -171,7 +171,54 @@ with st.sidebar:
 
     st.divider()
 
-    # Conversation history
+    # Settings (pinned above conversations so they don't get pushed down)
+    st.caption("SETTINGS")
+
+    if st.session_state.models:
+        model_options = ["Auto (recommended)"] + st.session_state.models
+        selected_option = st.selectbox(
+            "Model",
+            model_options,
+            help="Auto routes to the best model based on your message (code → qwen3.5, general → mistral). Pick a specific model to override.",
+        )
+        if selected_option == "Auto (recommended)":
+            selected_model = None  # gateway will use its default
+        else:
+            selected_model = selected_option
+    else:
+        selected_model = st.text_input("Model", value="mistral:7b")
+        st.warning("Could not fetch models from gateway")
+
+    temperature = st.slider("Temperature", 0.0, 1.0, 0.7, 0.1)
+
+    with st.expander("Advanced"):
+        num_predict = st.slider(
+            "Max response length",
+            64,
+            4096,
+            1024,
+            64,
+            help="Limit how long the response can be (in tokens, ~0.75 words each)",
+        )
+        top_p = st.slider(
+            "Top P",
+            0.0,
+            1.0,
+            0.9,
+            0.05,
+            help="Controls diversity. Lower = more focused, higher = more creative",
+        )
+        system_prompt = st.text_area(
+            "System prompt",
+            value="",
+            height=80,
+            help="Optional instructions the model follows for every message",
+            placeholder="e.g. You are a helpful cooking assistant",
+        )
+
+    st.divider()
+
+    # Conversation history (scrollable at the bottom)
     st.caption("RECENT CONVERSATIONS")
     try:
         conv_resp = httpx.get(f"{GATEWAY_URL}/conversations", timeout=10.0)
@@ -226,54 +273,6 @@ with st.sidebar:
             st.caption("Conversation history unavailable")
     except Exception:
         st.caption("Conversation history unavailable")
-
-    st.divider()
-
-    # Settings
-    st.caption("SETTINGS")
-
-    # Model selector — "Auto" routes to the server default
-    if st.session_state.models:
-        model_options = ["Auto (recommended)"] + st.session_state.models
-        selected_option = st.selectbox(
-            "Model",
-            model_options,
-            help="Auto routes to the best model based on your message (code → qwen3.5, general → mistral). Pick a specific model to override.",
-        )
-        if selected_option == "Auto (recommended)":
-            selected_model = None  # gateway will use its default
-        else:
-            selected_model = selected_option
-    else:
-        selected_model = st.text_input("Model", value="mistral:7b")
-        st.warning("Could not fetch models from gateway")
-
-    temperature = st.slider("Temperature", 0.0, 1.0, 0.7, 0.1)
-
-    with st.expander("Advanced"):
-        num_predict = st.slider(
-            "Max response length",
-            64,
-            4096,
-            1024,
-            64,
-            help="Limit how long the response can be (in tokens, ~0.75 words each)",
-        )
-        top_p = st.slider(
-            "Top P",
-            0.0,
-            1.0,
-            0.9,
-            0.05,
-            help="Controls diversity. Lower = more focused, higher = more creative",
-        )
-        system_prompt = st.text_area(
-            "System prompt",
-            value="",
-            height=80,
-            help="Optional instructions the model follows for every message",
-            placeholder="e.g. You are a helpful cooking assistant",
-        )
 
 # --- Main chat area ---
 
