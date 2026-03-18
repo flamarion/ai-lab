@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import sys
@@ -123,16 +124,36 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=502, detail=f"Ollama error: {e}")
 
     # Persist to DB if available
+    is_new_conversation = not request.conversation_id
     if db.is_available():
         try:
-            title = request.message[:80] if not request.conversation_id else ""
+            # For new conversations, use a placeholder title; LLM will generate a better one
+            title = request.message[:80] if is_new_conversation else ""
             await db.upsert_conversation(conversation_id, model, title)
             await db.add_message(conversation_id, "user", request.message)
             await db.add_message(conversation_id, "assistant", response_text)
         except Exception as e:
             logger.warning("Failed to persist conversation: %s", e)
 
+    # Generate a smart title in the background for new conversations
+    if is_new_conversation and db.is_available():
+        asyncio.create_task(
+            _generate_title(conversation_id, request.message, response_text, model)
+        )
+
     return ChatResponse(response=response_text, model=model, conversation_id=conversation_id)
+
+
+async def _generate_title(
+    conversation_id: str, user_message: str, assistant_response: str, model: str
+) -> None:
+    """Background task: ask the LLM for a short title and update the DB."""
+    try:
+        title = await client.generate_title(user_message, assistant_response, model)
+        await db.update_conversation_title(conversation_id, title)
+        logger.info("Generated title for %s: %s", conversation_id[:8], title)
+    except Exception as e:
+        logger.warning("Failed to generate title for %s: %s", conversation_id[:8], e)
 
 
 @app.get("/conversations")
