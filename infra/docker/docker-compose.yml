@@ -1,0 +1,24 @@
+services:
+  llm-gateway:
+    build:
+      context: ../../
+      dockerfile: services/llm-gateway/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../../.env
+    environment:
+      - PYTHONPATH=/app:/app/shared/python
+    restart: unless-stopped
+
+  chat-ui:
+    build:
+      context: ../../apps/chat-ui
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    environment:
+      - GATEWAY_URL=http://llm-gateway:8000
+    depends_on:
+      - llm-gateway
+    restart: unless-stopped
