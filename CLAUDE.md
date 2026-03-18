@@ -8,7 +8,7 @@ Personal AI engineering lab for learning end-to-end AI system design. The goal i
 
 ## Infrastructure
 
-- **GPU PC** (192.168.1.178): Ollama on port 11434 — serves mistral:latest, llama3:latest
+- **GPU PC** (192.168.1.178, hostname: mato): Ollama on port 11434 — serves mistral:7b, qwen3.5:latest, llama3:latest. RTX 3060 12GB + GTX 1650 4GB.
 - **ai-app VM** (Proxmox): Runs app services via Docker — gateway, chat UI, W&B Weave
 - **ai-data VM** (192.168.1.202, Proxmox): Data services — Postgres (conversation persistence)
 - **Ceph cluster**: 4TB — RBD block storage + S3 via RadosGW
@@ -86,6 +86,18 @@ Services are accessible from any LAN device at `http://<ai-app-vm-ip>:8501` (Cha
 
 **How it works:** Deploy scripts run `git pull --ff-only` then `docker compose up --build -d`. Containers run detached so they survive SSH disconnect. `restart: unless-stopped` in the compose files handles VM reboots — no systemd needed.
 
+### Unified control (aictl.sh)
+
+```bash
+./scripts/aictl.sh start            # pull + start all services
+./scripts/aictl.sh start app        # app services only
+./scripts/aictl.sh restart app      # restart after deploy
+./scripts/aictl.sh rebuild app      # force rebuild (no cache)
+./scripts/aictl.sh status           # show all container status
+./scripts/aictl.sh logs app -f      # follow app logs
+./scripts/aictl.sh stop             # stop everything
+```
+
 ## Architecture
 
 ```
@@ -99,7 +111,7 @@ User → Streamlit (chat-ui:8501) → FastAPI (llm-gateway:8000) → Ollama (GPU
 
 - `GET /health` — health check (includes database status)
 - `GET /models` — list available Ollama models
-- `POST /chat` — chat completion (accepts model, message, temperature, history, conversation_id)
+- `POST /chat` — chat completion (accepts model, message, temperature, top_p, num_predict, system_prompt, history, conversation_id)
 - `GET /conversations` — list recent conversations
 - `GET /conversations/{id}` — get conversation with messages
 - `DELETE /conversations/{id}` — delete a conversation
@@ -123,6 +135,29 @@ Two compose files, one per VM:
 - **Chat UI → Gateway**: Uses internal Docker network hostname `http://llm-gateway:8000`, passed via `GATEWAY_URL` env var in docker-compose.
 - **Graceful degradation**: Gateway starts even if Postgres or Weave are unavailable — logs a warning and serves stateless requests.
 - **Cross-VM communication**: Services discover each other via LAN IP:port in env vars (same pattern for Ollama and Postgres).
+- **Pass-through options**: The gateway validates and builds an Ollama options dict (temperature, top_p, num_predict); `OllamaClient.chat()` forwards it as-is. Adding a new Ollama option only requires a change to `ChatRequest` and the dict-building code — the client never changes.
+- **Auto model selection**: When no model is specified, the gateway tries: env var `OLLAMA_MODEL` → first available model from Ollama. No configuration required for Auto to work.
+
+## Ollama Server Tuning
+
+These environment variables are set on the GPU PC (mato) via `sudo systemctl edit ollama`:
+
+```ini
+[Service]
+Environment="OLLAMA_CONTEXT_LENGTH=16384"
+Environment="OLLAMA_FLASH_ATTENTION=1"
+Environment="OLLAMA_KEEP_ALIVE=15m"
+Environment="OLLAMA_KV_CACHE_TYPE=q8_0"
+Environment="OLLAMA_NO_CLOUD=1"
+```
+
+| Variable | Value | Why |
+|----------|-------|-----|
+| `OLLAMA_CONTEXT_LENGTH` | `16384` | 4x default (4096). Allows longer conversations before truncation. |
+| `OLLAMA_FLASH_ATTENTION` | `1` | Faster inference + less VRAM usage on RTX 3060 (Ampere). |
+| `OLLAMA_KEEP_ALIVE` | `15m` | Keeps model in VRAM 15 min after last request. Avoids reload latency between messages. |
+| `OLLAMA_KV_CACHE_TYPE` | `q8_0` | Quantizes KV cache from f16 to q8. Roughly halves context memory, enabling 16k context on 12GB. |
+| `OLLAMA_NO_CLOUD` | `1` | Disables cloud/telemetry features. Fully local operation. |
 
 ## Tech Stack
 

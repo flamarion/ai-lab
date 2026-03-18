@@ -8,7 +8,7 @@ class OllamaClient:
         self.http = httpx.AsyncClient(base_url=self.base_url, timeout=120.0)
 
     @weave.op()
-    async def chat(self, model: str, messages: list[dict], temperature: float = 0.7) -> str:
+    async def chat(self, model: str, messages: list[dict], options: dict | None = None) -> str:
         """Send a chat completion request to Ollama and return the response text."""
         response = await self.http.post(
             "/api/chat",
@@ -16,7 +16,7 @@ class OllamaClient:
                 "model": model,
                 "messages": messages,
                 "stream": False,
-                "options": {"temperature": temperature},
+                "options": options or {},
             },
         )
         response.raise_for_status()
