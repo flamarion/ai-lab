@@ -9,7 +9,7 @@ class Settings:
     GATEWAY_HOST: str = os.getenv("GATEWAY_HOST", "0.0.0.0")
     GATEWAY_PORT: int = int(os.getenv("GATEWAY_PORT", "8000"))
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text-v2-moe")
-    WEAVE_ENABLED: bool = os.getenv("WEAVE_ENABLED", "true").lower() in ("true", "1", "yes")
+    WEAVE_ENABLED: bool = os.getenv("WEAVE_ENABLED", "true").strip().lower() in ("true", "1", "yes")
     WANDB_PROJECT: str = os.getenv("WANDB_PROJECT", "ai-lab")
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://ailab:ailab_dev@192.168.1.202:5432/ailab")
     QDRANT_HOST: str = os.getenv("QDRANT_HOST", "192.168.1.202")

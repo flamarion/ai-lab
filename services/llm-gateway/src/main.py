@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Failed to initialize Weave: %s — tracing disabled.", e)
     else:
-        logger.info("Weave disabled (WEAVE_ENABLED=false)")
+        logger.info("Weave disabled (WEAVE_ENABLED=%s)", os.getenv("WEAVE_ENABLED", "true"))
 
     # --- Database pool init ---
     try:
