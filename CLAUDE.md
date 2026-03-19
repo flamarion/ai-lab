@@ -113,13 +113,31 @@ User → Streamlit (chat-ui:8501) → FastAPI (llm-gateway:8000) → Ollama (GPU
 
 ### Gateway API Endpoints
 
-- `GET /health` — health check (includes database status)
-- `GET /models` — list available Ollama models
-- `POST /chat` — chat completion (accepts model, message, temperature, top_p, num_predict, system_prompt, use_rag, history, conversation_id)
+**Core:**
+- `GET /health` — health check (includes database + vector store status)
+- `GET /models` — list available Ollama models (embedding models filtered out)
+- `POST /chat` — chat completion (accepts model, message, temperature, top_p, num_predict, system_prompt, use_rag, user_id, history, conversation_id)
+
+**Auth:**
+- `GET /auth/users` — list usernames (for login dropdown, no IDs exposed)
+- `POST /auth/register` — create user (username + PIN, first user is auto-admin)
+- `POST /auth/login` — authenticate (returns user_id, is_admin, preferences)
+- `PATCH /auth/preferences` — update user preferences (model, temperature)
+- `POST /auth/change-pin` — change own PIN (requires current PIN)
+
+**Admin (requires admin user):**
+- `GET /admin/users` — list all users with IDs and admin status
+- `POST /admin/reset-pin` — reset another user's PIN
+- `POST /admin/toggle-admin` — grant/revoke admin
+- `POST /admin/delete-user` — delete a user (conversations become unowned)
+
+**RAG:**
 - `POST /ingest` — upload a document for RAG (file upload, returns document_id + chunk count)
 - `GET /documents` — list ingested documents
 - `DELETE /documents/{id}` — delete a document and its vectors
-- `GET /conversations` — list recent conversations
+
+**Conversations:**
+- `GET /conversations` — list recent conversations (filtered by user_id query param)
 - `GET /conversations/{id}` — get conversation with messages
 - `DELETE /conversations/{id}` — delete a conversation
 
@@ -130,8 +148,11 @@ Postgres stores conversations, messages, and document metadata. Qdrant stores do
 Schema is managed via numbered SQL migrations in `infra/migrations/`. The gateway runs pending migrations automatically on startup (tracked in a `_migrations` table). To add a new migration, create `infra/migrations/003_description.sql` — it will be applied on the next deploy. Use `IF NOT EXISTS` / `IF EXISTS` for idempotency.
 
 Current migrations:
-- `001_conversations.sql` — conversations + messages tables
+- `001_conversations.sql` — conversations + messages tables + pgcrypto extension
 - `002_documents.sql` — documents table (RAG metadata; chunk text lives in Qdrant payloads)
+- `003_users.sql` — users table (username, PIN hash, preferences) + conversations.user_id FK
+- `004_user_admin.sql` — is_admin column on users
+- `005_user_delete_cascade.sql` — ON DELETE SET NULL for conversations.user_id FK
 
 Two compose files, one per VM:
 - `infra/docker/docker-compose.yml` — ai-app VM (gateway + chat UI)
@@ -156,6 +177,7 @@ The embedding model uses prefixes for optimal performance: `search_document:` fo
 - **Database migrations**: Numbered SQL files in `infra/migrations/` are applied automatically on gateway startup. A `_migrations` table tracks what's been applied. No manual SQL execution needed on deploy.
 - **Cross-VM communication**: Services discover each other via LAN IP:port in env vars (same pattern for Ollama and Postgres).
 - **Pass-through options**: The gateway validates and builds an Ollama options dict (temperature, top_p, num_predict); `OllamaClient.chat()` forwards it as-is. Adding a new Ollama option only requires a change to `ChatRequest` and the dict-building code — the client never changes.
+- **PIN-based auth**: Users register with username + 4-8 digit PIN (bcrypt hashed). First registered user is auto-admin. Per-user conversations — each user sees only their own. Admin panel for user management (reset PINs, toggle admin, delete users). Settings (model, temperature) persist per-user as JSONB in the users table.
 - **Smart model routing**: When "Auto" is selected (no explicit model in request), the gateway's `router.py` classifies the prompt via keyword matching and picks the best model. Code/technical prompts route to `ROUTE_CODE_MODEL` (qwen3.5), everything else to `ROUTE_DEFAULT_MODEL` (mistral). The selected model and reason are logged for observability. Users can always override by picking a specific model in the dropdown.
 
 ## Ollama Server Tuning
@@ -183,8 +205,9 @@ Environment="OLLAMA_NO_CLOUD=1"
 
 - Python 3.12, FastAPI, Streamlit, httpx
 - Ollama (local LLM inference + embeddings)
-- Postgres 16, asyncpg (conversation persistence + document metadata)
+- Postgres 16, asyncpg (conversations, documents, users)
 - Qdrant (vector search for RAG)
+- bcrypt (PIN hashing)
 - W&B Weave (tracing/observability)
 - pypdf (PDF text extraction)
 - Docker Compose (deployment)
