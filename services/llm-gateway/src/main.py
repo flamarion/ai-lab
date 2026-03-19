@@ -5,7 +5,7 @@ import sys
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile
 from pydantic import BaseModel
 
 # Add shared module to path (for local dev outside Docker)
@@ -14,12 +14,20 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
     sys.path.insert(0, _shared_path)
 
 from ai_lab_common.config import settings
-from src import db, router
+from src import chunker, db, router, vector_store
 from src.ollama_client import OllamaClient
 
 logger = logging.getLogger(__name__)
 
 client: OllamaClient | None = None
+
+# RAG prompt template injected as a system message when use_rag=True
+_RAG_SYSTEM_PROMPT = (
+    "Use the following context to answer the user's question. "
+    "If the context doesn't contain relevant information, say so — "
+    "do not make up an answer.\n\n"
+    "Context:\n{context}"
+)
 
 
 @asynccontextmanager
@@ -29,8 +37,6 @@ async def lifespan(app: FastAPI):
     try:
         import weave
 
-        # Workaround: weave 0.52.x passes logging.info (function) instead of
-        # logging.INFO (int) when configuring loggers during init.
         _original_checkLevel = logging._checkLevel
 
         def _patched_checkLevel(level):
@@ -45,25 +51,33 @@ async def lifespan(app: FastAPI):
             logging._checkLevel = _original_checkLevel
         logger.info("Weave initialized — project: %s", settings.WANDB_PROJECT)
     except Exception as e:
-        logger.warning("Failed to initialize Weave: %s — tracing disabled, gateway will serve requests without it.", e)
+        logger.warning("Failed to initialize Weave: %s — tracing disabled.", e)
 
     # --- Database pool init ---
     try:
         await db.init_pool(settings.DATABASE_URL)
         logger.info("Database connected")
     except Exception as e:
-        logger.warning("Failed to connect to database: %s — conversation persistence disabled.", e)
+        logger.warning("Failed to connect to database: %s — persistence disabled.", e)
+
+    # --- Qdrant init ---
+    try:
+        vector_store.init_store()
+        logger.info("Qdrant connected")
+    except Exception as e:
+        logger.warning("Failed to connect to Qdrant: %s — RAG disabled.", e)
 
     client = OllamaClient(settings.OLLAMA_HOST)
     yield
     await client.close()
     await db.close_pool()
+    vector_store.close_store()
 
 
 app = FastAPI(title="AI Lab - LLM Gateway", lifespan=lifespan)
 
 
-# --- Models ---
+# --- Request/Response Models ---
 
 
 class ChatRequest(BaseModel):
@@ -73,6 +87,7 @@ class ChatRequest(BaseModel):
     top_p: float | None = None
     num_predict: int | None = None
     system_prompt: str | None = None
+    use_rag: bool = False
     history: list[dict] = []
     conversation_id: str | None = None
 
@@ -88,7 +103,11 @@ class ChatResponse(BaseModel):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "database": db.is_available()}
+    return {
+        "status": "ok",
+        "database": db.is_available(),
+        "vector_store": vector_store.is_available(),
+    }
 
 
 @app.get("/models")
@@ -123,6 +142,29 @@ async def chat(request: ChatRequest):
     if request.system_prompt and request.system_prompt.strip():
         messages.insert(0, {"role": "system", "content": request.system_prompt.strip()})
 
+    # RAG: retrieve relevant context and inject into the prompt
+    if request.use_rag and vector_store.is_available():
+        try:
+            query_text = f"search_query: {request.message}"
+            query_vectors = await client.embed([query_text])
+            results = vector_store.search(query_vectors[0], limit=5)
+
+            if results:
+                context_parts = []
+                for r in results:
+                    source = r.get("source", "unknown")
+                    context_parts.append(f"[{source}]\n{r['text']}")
+                context = "\n---\n".join(context_parts)
+
+                rag_system = _RAG_SYSTEM_PROMPT.format(context=context)
+                # Prepend RAG context as the first system message
+                messages.insert(0, {"role": "system", "content": rag_system})
+                logger.info("RAG: injected %d chunks into prompt", len(results))
+            else:
+                logger.info("RAG: no relevant chunks found")
+        except Exception as e:
+            logger.warning("RAG search failed, proceeding without context: %s", e)
+
     messages.append({"role": "user", "content": request.message})
 
     # Build Ollama options (only include non-default values)
@@ -146,7 +188,6 @@ async def chat(request: ChatRequest):
     is_new_conversation = not request.conversation_id
     if db.is_available():
         try:
-            # For new conversations, use a placeholder title; LLM will generate a better one
             title = request.message[:80] if is_new_conversation else ""
             await db.upsert_conversation(conversation_id, model, title)
             await db.add_message(conversation_id, "user", request.message)
@@ -173,6 +214,90 @@ async def _generate_title(
         logger.info("Generated title for %s: %s", conversation_id[:8], title)
     except Exception as e:
         logger.warning("Failed to generate title for %s: %s", conversation_id[:8], e)
+
+
+# --- Document ingestion ---
+
+
+@app.post("/ingest")
+async def ingest_file(file: UploadFile):
+    """Upload a document, chunk it, embed chunks, and store in Qdrant."""
+    if not vector_store.is_available():
+        raise HTTPException(status_code=503, detail="Vector store not available")
+
+    filename = file.filename or "unknown"
+    content_bytes = await file.read()
+
+    # Load document content
+    try:
+        text = chunker.load_bytes(content_bytes, filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Document is empty")
+
+    # Chunk the document
+    chunks = chunker.chunk_text(text)
+    if not chunks:
+        raise HTTPException(status_code=400, detail="No chunks produced from document")
+
+    # Embed all chunks in a batch (with search_document prefix)
+    prefixed_texts = [f"search_document: {c['text']}" for c in chunks]
+    try:
+        vectors = await client.embed(prefixed_texts)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Embedding failed: {e}")
+
+    # Record document in Postgres
+    document_id = None
+    if db.is_available():
+        try:
+            document_id = await db.add_document(filename, len(chunks))
+        except Exception as e:
+            logger.warning("Failed to record document in DB: %s", e)
+
+    if not document_id:
+        document_id = str(uuid.uuid4())
+
+    # Store vectors in Qdrant
+    vector_store.upsert_chunks(chunks, vectors, document_id, filename)
+
+    logger.info("Ingested %s: %d chunks, doc_id=%s", filename, len(chunks), document_id[:8])
+    return {
+        "document_id": document_id,
+        "source": filename,
+        "num_chunks": len(chunks),
+    }
+
+
+@app.get("/documents")
+async def list_documents():
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    documents = await db.list_documents()
+    return {"documents": documents}
+
+
+@app.delete("/documents/{document_id}")
+async def delete_document(document_id: str):
+    # Remove vectors from Qdrant
+    if vector_store.is_available():
+        try:
+            vector_store.delete_by_document(document_id)
+        except Exception as e:
+            logger.warning("Failed to delete vectors from Qdrant: %s", e)
+
+    # Remove metadata from Postgres
+    if db.is_available():
+        deleted = await db.delete_document(document_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+    return {"status": "deleted"}
+
+
+# --- Conversation endpoints ---
 
 
 @app.get("/conversations")

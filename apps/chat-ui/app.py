@@ -215,6 +215,11 @@ with st.sidebar:
             help="Optional instructions the model follows for every message",
             placeholder="e.g. You are a helpful cooking assistant",
         )
+        use_rag = st.toggle(
+            "Use documents (RAG)",
+            value=False,
+            help="Ground answers in your uploaded documents",
+        )
 
     st.divider()
 
@@ -321,6 +326,8 @@ if prompt := st.chat_input("Type your message..."):
                     payload["num_predict"] = num_predict
                 if system_prompt.strip():
                     payload["system_prompt"] = system_prompt
+                if use_rag:
+                    payload["use_rag"] = True
                 if st.session_state.conversation_id:
                     payload["conversation_id"] = st.session_state.conversation_id
                 else:

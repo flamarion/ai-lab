@@ -1,6 +1,8 @@
 import httpx
 import weave
 
+from ai_lab_common.config import settings
+
 
 class OllamaClient:
     def __init__(self, base_url: str):
@@ -49,6 +51,19 @@ class OllamaClient:
         response.raise_for_status()
         title = response.json()["message"]["content"].strip().strip("\"'")
         return title[:80]
+
+    @weave.op()
+    async def embed(self, texts: list[str], model: str | None = None) -> list[list[float]]:
+        """Embed one or more texts via Ollama /api/embed."""
+        response = await self.http.post(
+            "/api/embed",
+            json={
+                "model": model or settings.OLLAMA_EMBED_MODEL,
+                "input": texts,
+            },
+        )
+        response.raise_for_status()
+        return response.json()["embeddings"]
 
     async def list_models(self) -> list[dict]:
         """List available models on the Ollama instance."""
