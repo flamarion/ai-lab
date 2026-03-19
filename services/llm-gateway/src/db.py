@@ -253,11 +253,16 @@ async def get_user_by_username(username: str) -> dict | None:
 
 
 async def list_users() -> list[dict]:
-    """Return all users (id, username, is_admin — no secrets)."""
+    """Return all users (id, username, is_admin, is_child — no secrets)."""
     pool = _pool_or_raise()
-    rows = await pool.fetch("SELECT id, username, is_admin FROM users ORDER BY username")
+    rows = await pool.fetch("SELECT id, username, is_admin, is_child FROM users ORDER BY username")
     return [
-        {"id": str(r["id"]), "username": r["username"], "is_admin": r["is_admin"]}
+        {
+            "id": str(r["id"]),
+            "username": r["username"],
+            "is_admin": r["is_admin"],
+            "is_child": r["is_child"],
+        }
         for r in rows
     ]
 
@@ -290,6 +295,17 @@ async def update_user_admin(user_id: str, is_admin: bool) -> bool:
     result = await pool.execute(
         "UPDATE users SET is_admin = $1 WHERE id = $2",
         is_admin,
+        uuid.UUID(user_id),
+    )
+    return result == "UPDATE 1"
+
+
+async def update_user_child(user_id: str, is_child: bool) -> bool:
+    """Toggle child flag. Returns True if user exists."""
+    pool = _pool_or_raise()
+    result = await pool.execute(
+        "UPDATE users SET is_child = $1 WHERE id = $2",
+        is_child,
         uuid.UUID(user_id),
     )
     return result == "UPDATE 1"
