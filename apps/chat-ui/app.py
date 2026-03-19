@@ -1,4 +1,5 @@
 import html
+import json
 import os
 from datetime import datetime, timezone
 
@@ -227,14 +228,15 @@ if not st.session_state.user_id:
 prefs = st.session_state.preferences
 # Handle legacy: preferences may be a JSON string if stored before the double-encoding fix
 if isinstance(prefs, str):
-    import json
     try:
         prefs = json.loads(prefs)
     except (json.JSONDecodeError, TypeError):
         prefs = {}
-    st.session_state.preferences = prefs
-default_model = prefs.get("model", "Auto (recommended)") if isinstance(prefs, dict) else "Auto (recommended)"
-default_temp = prefs.get("temperature", 0.7) if isinstance(prefs, dict) else 0.7
+if not isinstance(prefs, dict):
+    prefs = {}
+st.session_state.preferences = prefs
+default_model = prefs.get("model", "Auto (recommended)")
+default_temp = prefs.get("temperature", 0.7)
 
 # --- Sidebar: user header + navigation ---
 with st.sidebar:
