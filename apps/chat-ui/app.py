@@ -431,11 +431,15 @@ if st.session_state.page == "Chat":
                     data = resp.json()
                     answer = data["response"]
                     st.session_state.conversation_id = data.get("conversation_id")
+                    success = True
                 except Exception as e:
                     answer = f"Error: {e}"
+                    success = False
             st.markdown(answer)
 
-        st.session_state.messages.append({"role": "assistant", "content": answer})
+        # Only add successful responses to history — errors would confuse the LLM
+        if success:
+            st.session_state.messages.append({"role": "assistant", "content": answer})
 
 
 # ============================================================

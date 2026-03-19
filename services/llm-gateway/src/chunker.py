@@ -118,9 +118,10 @@ def chunk_text(
             })
             # Start new chunk with overlap from the end of the previous
             if overlap > 0 and len(current) > overlap:
+                prev_len = len(current)
                 overlap_text = current[-overlap:]
                 current = overlap_text + "\n\n" + para
-                current_start = current_start + len(current) - len(overlap_text) - len(para) - 2
+                current_start = current_start + prev_len - len(overlap_text)
             else:
                 current = para
                 current_start = para_start

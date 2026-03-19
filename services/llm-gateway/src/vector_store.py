@@ -54,7 +54,7 @@ def upsert_chunks(
 
     points = [
         PointStruct(
-            id=str(uuid.uuid4()),
+            id=uuid.uuid4().hex,
             vector=vector,
             payload={
                 "text": chunk["text"],
