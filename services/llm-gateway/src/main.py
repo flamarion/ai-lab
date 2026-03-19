@@ -1,12 +1,14 @@
 import asyncio
 import logging
 import os
+import re
 import sys
 import uuid
 from contextlib import asynccontextmanager
 
 import bcrypt
 from fastapi import FastAPI, HTTPException, Query, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 # Add shared module to path (for local dev outside Docker)
@@ -29,6 +31,16 @@ _RAG_SYSTEM_PROMPT = (
     "do not make up an answer.\n\n"
     "Context:\n{context}"
 )
+
+_PIN_PATTERN = re.compile(r"^\d{4,8}$")
+
+
+def _validate_uuid(value: str) -> uuid.UUID:
+    """Parse a UUID string or raise 400."""
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid UUID: {value}")
 
 
 @asynccontextmanager
@@ -122,6 +134,29 @@ class PreferencesRequest(BaseModel):
     preferences: dict
 
 
+class ChangePinRequest(BaseModel):
+    user_id: str
+    current_pin: str
+    new_pin: str
+
+
+class AdminResetPinRequest(BaseModel):
+    admin_user_id: str
+    target_user_id: str
+    new_pin: str
+
+
+class AdminToggleRequest(BaseModel):
+    admin_user_id: str
+    target_user_id: str
+    is_admin: bool
+
+
+class AdminDeleteUserRequest(BaseModel):
+    admin_user_id: str
+    target_user_id: str
+
+
 # --- Auth Endpoints ---
 
 
@@ -137,8 +172,8 @@ async def list_users():
 async def register(request: RegisterRequest):
     if not db.is_available():
         raise HTTPException(status_code=503, detail="Database not available")
-    if len(request.pin) < 4:
-        raise HTTPException(status_code=400, detail="PIN must be at least 4 digits")
+    if not _PIN_PATTERN.match(request.pin):
+        raise HTTPException(status_code=400, detail="PIN must be 4-8 digits")
     if not request.username.strip():
         raise HTTPException(status_code=400, detail="Username is required")
 
@@ -146,9 +181,16 @@ async def register(request: RegisterRequest):
     if existing:
         raise HTTPException(status_code=409, detail="Username already taken")
 
-    pin_hash = bcrypt.hashpw(request.pin.encode(), bcrypt.gensalt()).decode()
-    user_id = await db.create_user(request.username.strip(), pin_hash)
-    return {"user_id": user_id, "username": request.username.strip()}
+    pin_hash = await run_in_threadpool(
+        bcrypt.hashpw, request.pin.encode(), bcrypt.gensalt()
+    )
+
+    # First user is auto-admin
+    user_count = await db.count_users()
+    is_admin = user_count == 0
+
+    user_id = await db.create_user(request.username.strip(), pin_hash.decode(), is_admin)
+    return {"user_id": user_id, "username": request.username.strip(), "is_admin": is_admin}
 
 
 @app.post("/auth/login")
@@ -160,12 +202,16 @@ async def login(request: LoginRequest):
     if not user:
         raise HTTPException(status_code=401, detail="Invalid username or PIN")
 
-    if not bcrypt.checkpw(request.pin.encode(), user["pin_hash"].encode()):
+    valid = await run_in_threadpool(
+        bcrypt.checkpw, request.pin.encode(), user["pin_hash"].encode()
+    )
+    if not valid:
         raise HTTPException(status_code=401, detail="Invalid username or PIN")
 
     return {
         "user_id": user["id"],
         "username": user["username"],
+        "is_admin": user["is_admin"],
         "preferences": user["preferences"],
     }
 
@@ -174,8 +220,106 @@ async def login(request: LoginRequest):
 async def update_preferences(request: PreferencesRequest):
     if not db.is_available():
         raise HTTPException(status_code=503, detail="Database not available")
-    await db.update_user_preferences(request.user_id, request.preferences)
+    _validate_uuid(request.user_id)
+    updated = await db.update_user_preferences(request.user_id, request.preferences)
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
     return {"status": "updated"}
+
+
+@app.post("/auth/change-pin")
+async def change_pin(request: ChangePinRequest):
+    """Allow a user to change their own PIN."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    if not _PIN_PATTERN.match(request.new_pin):
+        raise HTTPException(status_code=400, detail="New PIN must be 4-8 digits")
+
+    # Verify current PIN by looking up the user
+    _validate_uuid(request.user_id)
+    users = await db.list_users()
+    target = next((u for u in users if u["id"] == request.user_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user = await db.get_user_by_username(target["username"])
+    valid = await run_in_threadpool(
+        bcrypt.checkpw, request.current_pin.encode(), user["pin_hash"].encode()
+    )
+    if not valid:
+        raise HTTPException(status_code=401, detail="Current PIN is incorrect")
+
+    new_hash = await run_in_threadpool(
+        bcrypt.hashpw, request.new_pin.encode(), bcrypt.gensalt()
+    )
+    await db.update_user_pin(request.user_id, new_hash.decode())
+    return {"status": "pin_changed"}
+
+
+# --- Admin Endpoints ---
+
+
+async def _require_admin(admin_user_id: str) -> dict:
+    """Validate that the given user_id belongs to an admin."""
+    _validate_uuid(admin_user_id)
+    users = await db.list_users()
+    admin = next((u for u in users if u["id"] == admin_user_id), None)
+    if not admin or not admin.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return admin
+
+
+@app.post("/admin/reset-pin")
+async def admin_reset_pin(request: AdminResetPinRequest):
+    """Admin resets another user's PIN."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(request.admin_user_id)
+    if not _PIN_PATTERN.match(request.new_pin):
+        raise HTTPException(status_code=400, detail="New PIN must be 4-8 digits")
+
+    _validate_uuid(request.target_user_id)
+    new_hash = await run_in_threadpool(
+        bcrypt.hashpw, request.new_pin.encode(), bcrypt.gensalt()
+    )
+    updated = await db.update_user_pin(request.target_user_id, new_hash.decode())
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"status": "pin_reset"}
+
+
+@app.post("/admin/toggle-admin")
+async def admin_toggle_admin(request: AdminToggleRequest):
+    """Admin toggles another user's admin status."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(request.admin_user_id)
+    _validate_uuid(request.target_user_id)
+
+    if request.admin_user_id == request.target_user_id:
+        raise HTTPException(status_code=400, detail="Cannot change your own admin status")
+
+    updated = await db.update_user_admin(request.target_user_id, request.is_admin)
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"status": "updated", "is_admin": request.is_admin}
+
+
+@app.post("/admin/delete-user")
+async def admin_delete_user(request: AdminDeleteUserRequest):
+    """Admin deletes a user."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(request.admin_user_id)
+    _validate_uuid(request.target_user_id)
+
+    if request.admin_user_id == request.target_user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+
+    deleted = await db.delete_user(request.target_user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"status": "deleted"}
 
 
 # --- Core Endpoints ---
@@ -194,7 +338,6 @@ async def health():
 async def list_models():
     try:
         models = await client.list_models()
-        # Filter out embedding models — they're not for chat
         return {"models": [m["name"] for m in models if "embed" not in m["name"].lower()]}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to reach Ollama: {e}")
@@ -377,6 +520,8 @@ async def delete_document(document_id: str):
 async def list_conversations(user_id: str | None = Query(None)):
     if not db.is_available():
         raise HTTPException(status_code=503, detail="Database not available")
+    if user_id:
+        _validate_uuid(user_id)
     conversations = await db.list_conversations(user_id=user_id)
     return {"conversations": conversations}
 

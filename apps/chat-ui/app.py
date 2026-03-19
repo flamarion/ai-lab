@@ -172,6 +172,8 @@ if "username" not in st.session_state:
     st.session_state.username = None
 if "preferences" not in st.session_state:
     st.session_state.preferences = {}
+if "is_admin" not in st.session_state:
+    st.session_state.is_admin = False
 
 # Fetch models once per session
 if "models" not in st.session_state:
@@ -217,6 +219,7 @@ if not st.session_state.user_id:
                             data = resp.json()
                             st.session_state.user_id = data["user_id"]
                             st.session_state.username = data["username"]
+                            st.session_state.is_admin = data.get("is_admin", False)
                             st.session_state.preferences = data.get("preferences", {})
                             st.rerun()
                         else:
@@ -243,6 +246,7 @@ if not st.session_state.user_id:
                         data = resp.json()
                         st.session_state.user_id = data["user_id"]
                         st.session_state.username = data["username"]
+                        st.session_state.is_admin = data.get("is_admin", False)
                         st.session_state.preferences = {}
                         st.rerun()
                     else:
@@ -272,8 +276,12 @@ with st.sidebar:
         st.markdown(f"#### 🧪 {st.session_state.username}")
     with col_logout:
         if st.button("↩", help="Sign out", type="tertiary"):
-            for key in ["user_id", "username", "preferences", "messages", "conversation_id"]:
-                st.session_state[key] = None
+            st.session_state.user_id = None
+            st.session_state.username = None
+            st.session_state.is_admin = False
+            st.session_state.preferences = {}
+            st.session_state.messages = []
+            st.session_state.conversation_id = None
             st.rerun()
 
     # New Chat
@@ -421,6 +429,115 @@ with st.sidebar:
             st.caption("Conversation history unavailable")
     except Exception:
         st.caption("Conversation history unavailable")
+
+    st.divider()
+
+    # Account section — change PIN
+    with st.expander("Account"):
+        st.caption("CHANGE PIN")
+        current_pin = st.text_input("Current PIN", type="password", max_chars=8, key="chg_cur_pin")
+        new_pin = st.text_input("New PIN (4-8 digits)", type="password", max_chars=8, key="chg_new_pin")
+        if st.button("Update PIN", use_container_width=True):
+            if current_pin and new_pin and len(new_pin) >= 4:
+                try:
+                    resp = httpx.post(
+                        f"{GATEWAY_URL}/auth/change-pin",
+                        json={
+                            "user_id": st.session_state.user_id,
+                            "current_pin": current_pin,
+                            "new_pin": new_pin,
+                        },
+                        timeout=10.0,
+                    )
+                    if resp.status_code == 200:
+                        st.success("PIN updated")
+                    else:
+                        st.error(resp.json().get("detail", "Failed"))
+                except Exception:
+                    st.error("Could not connect to gateway")
+            else:
+                st.warning("Enter current PIN and new PIN (4+ digits)")
+
+    # Admin panel — only visible to admins
+    if st.session_state.is_admin:
+        with st.expander("Admin"):
+            st.caption("USER MANAGEMENT")
+            try:
+                users_resp = httpx.get(f"{GATEWAY_URL}/auth/users", timeout=5.0)
+                all_users = users_resp.json().get("users", []) if users_resp.status_code == 200 else []
+            except Exception:
+                all_users = []
+
+            for u in all_users:
+                col_name, col_admin, col_del = st.columns([3, 1, 1])
+                with col_name:
+                    admin_badge = " (admin)" if u.get("is_admin") else ""
+                    st.text(f"{u['username']}{admin_badge}")
+                with col_admin:
+                    if u["id"] != st.session_state.user_id:
+                        new_admin = not u.get("is_admin", False)
+                        label = "+" if new_admin else "-"
+                        if st.button(label, key=f"adm_{u['id']}", help="Toggle admin"):
+                            try:
+                                httpx.post(
+                                    f"{GATEWAY_URL}/admin/toggle-admin",
+                                    json={
+                                        "admin_user_id": st.session_state.user_id,
+                                        "target_user_id": u["id"],
+                                        "is_admin": new_admin,
+                                    },
+                                    timeout=10.0,
+                                )
+                                st.rerun()
+                            except Exception:
+                                st.error("Failed")
+                with col_del:
+                    if u["id"] != st.session_state.user_id:
+                        if st.button("🗑", key=f"delusr_{u['id']}", type="tertiary"):
+                            try:
+                                httpx.post(
+                                    f"{GATEWAY_URL}/admin/delete-user",
+                                    json={
+                                        "admin_user_id": st.session_state.user_id,
+                                        "target_user_id": u["id"],
+                                    },
+                                    timeout=10.0,
+                                )
+                                st.rerun()
+                            except Exception:
+                                st.error("Failed")
+
+            st.caption("RESET USER PIN")
+            if all_users:
+                other_users = [u for u in all_users if u["id"] != st.session_state.user_id]
+                if other_users:
+                    reset_user = st.selectbox(
+                        "User",
+                        [u["username"] for u in other_users],
+                        key="reset_user_select",
+                    )
+                    reset_pin = st.text_input("New PIN", type="password", max_chars=8, key="reset_pin_input")
+                    if st.button("Reset PIN", use_container_width=True):
+                        target = next(u for u in other_users if u["username"] == reset_user)
+                        if reset_pin and len(reset_pin) >= 4:
+                            try:
+                                resp = httpx.post(
+                                    f"{GATEWAY_URL}/admin/reset-pin",
+                                    json={
+                                        "admin_user_id": st.session_state.user_id,
+                                        "target_user_id": target["id"],
+                                        "new_pin": reset_pin,
+                                    },
+                                    timeout=10.0,
+                                )
+                                if resp.status_code == 200:
+                                    st.success(f"PIN reset for {reset_user}")
+                                else:
+                                    st.error(resp.json().get("detail", "Failed"))
+                            except Exception:
+                                st.error("Could not connect to gateway")
+                        else:
+                            st.warning("Enter a PIN (4+ digits)")
 
 # --- Main chat area ---
 

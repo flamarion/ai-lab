@@ -1,5 +1,6 @@
 """Database layer — asyncpg connection pool and conversation persistence."""
 
+import json
 import logging
 import uuid
 
@@ -49,7 +50,9 @@ async def upsert_conversation(
         """
         INSERT INTO conversations (id, model, title, user_id, created_at, updated_at)
         VALUES ($1, $2, $3, $4, now(), now())
-        ON CONFLICT (id) DO UPDATE SET updated_at = now()
+        ON CONFLICT (id) DO UPDATE SET
+            updated_at = now(),
+            user_id = COALESCE(conversations.user_id, EXCLUDED.user_id)
         """,
         uuid.UUID(conversation_id),
         model,
@@ -219,13 +222,14 @@ async def delete_document(document_id: str) -> bool:
 # --- Users ---
 
 
-async def create_user(username: str, pin_hash: str) -> str:
+async def create_user(username: str, pin_hash: str, is_admin: bool = False) -> str:
     """Create a user and return their ID."""
     pool = _pool_or_raise()
     row = await pool.fetchrow(
-        "INSERT INTO users (username, pin_hash) VALUES ($1, $2) RETURNING id",
+        "INSERT INTO users (username, pin_hash, is_admin) VALUES ($1, $2, $3) RETURNING id",
         username,
         pin_hash,
+        is_admin,
     )
     return str(row["id"])
 
@@ -234,7 +238,7 @@ async def get_user_by_username(username: str) -> dict | None:
     """Return user by username or None."""
     pool = _pool_or_raise()
     row = await pool.fetchrow(
-        "SELECT id, username, pin_hash, preferences, created_at FROM users WHERE username = $1",
+        "SELECT id, username, pin_hash, is_admin, preferences, created_at FROM users WHERE username = $1",
         username,
     )
     if row is None:
@@ -243,26 +247,68 @@ async def get_user_by_username(username: str) -> dict | None:
         "id": str(row["id"]),
         "username": row["username"],
         "pin_hash": row["pin_hash"],
+        "is_admin": row["is_admin"],
         "preferences": row["preferences"],
     }
 
 
 async def list_users() -> list[dict]:
-    """Return all users (id + username only, no secrets)."""
+    """Return all users (id, username, is_admin — no secrets)."""
     pool = _pool_or_raise()
-    rows = await pool.fetch("SELECT id, username FROM users ORDER BY username")
-    return [{"id": str(r["id"]), "username": r["username"]} for r in rows]
+    rows = await pool.fetch("SELECT id, username, is_admin FROM users ORDER BY username")
+    return [
+        {"id": str(r["id"]), "username": r["username"], "is_admin": r["is_admin"]}
+        for r in rows
+    ]
 
 
-async def update_user_preferences(user_id: str, preferences: dict) -> None:
-    """Update a user's preferences JSON."""
+async def update_user_preferences(user_id: str, preferences: dict) -> bool:
+    """Update a user's preferences JSON. Returns True if user exists."""
     pool = _pool_or_raise()
-    import json
-    await pool.execute(
-        "UPDATE users SET preferences = $1 WHERE id = $2",
+    result = await pool.execute(
+        "UPDATE users SET preferences = $1::jsonb WHERE id = $2",
         json.dumps(preferences),
         uuid.UUID(user_id),
     )
+    return result == "UPDATE 1"
+
+
+async def update_user_pin(user_id: str, pin_hash: str) -> bool:
+    """Update a user's PIN hash. Returns True if user exists."""
+    pool = _pool_or_raise()
+    result = await pool.execute(
+        "UPDATE users SET pin_hash = $1 WHERE id = $2",
+        pin_hash,
+        uuid.UUID(user_id),
+    )
+    return result == "UPDATE 1"
+
+
+async def update_user_admin(user_id: str, is_admin: bool) -> bool:
+    """Toggle admin status. Returns True if user exists."""
+    pool = _pool_or_raise()
+    result = await pool.execute(
+        "UPDATE users SET is_admin = $1 WHERE id = $2",
+        is_admin,
+        uuid.UUID(user_id),
+    )
+    return result == "UPDATE 1"
+
+
+async def delete_user(user_id: str) -> bool:
+    """Delete a user. Returns True if existed."""
+    pool = _pool_or_raise()
+    result = await pool.execute(
+        "DELETE FROM users WHERE id = $1",
+        uuid.UUID(user_id),
+    )
+    return result == "DELETE 1"
+
+
+async def count_users() -> int:
+    """Return the total number of users."""
+    pool = _pool_or_raise()
+    return await pool.fetchval("SELECT COUNT(*) FROM users")
 
 
 def is_available() -> bool:
