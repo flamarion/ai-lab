@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY shared/python /app/shared/python
 COPY services/llm-gateway/src /app/src
+COPY infra/migrations /app/infra/migrations
 
 ENV PYTHONPATH=/app:/app/shared/python
 
