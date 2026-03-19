@@ -1,3 +1,4 @@
+import html
 import os
 from datetime import datetime, timezone
 
@@ -463,7 +464,11 @@ with st.sidebar:
         with st.expander("Admin"):
             st.caption("USER MANAGEMENT")
             try:
-                users_resp = httpx.get(f"{GATEWAY_URL}/auth/users", timeout=5.0)
+                users_resp = httpx.get(
+                    f"{GATEWAY_URL}/admin/users",
+                    params={"admin_user_id": st.session_state.user_id},
+                    timeout=5.0,
+                )
                 all_users = users_resp.json().get("users", []) if users_resp.status_code == 200 else []
             except Exception:
                 all_users = []
@@ -547,7 +552,7 @@ if not st.session_state.messages:
         f"""
     <div class="welcome-box">
         <div class="welcome-icon">🧪</div>
-        <div class="welcome-title">Hey {st.session_state.username}!</div>
+        <div class="welcome-title">Hey {html.escape(st.session_state.username or "")}!</div>
         <div class="welcome-sub">Your personal AI assistant — powered by local models</div>
         <div style="margin-top: 1.5rem;">
             <div class="hint-card">💡 Ask me anything</div>

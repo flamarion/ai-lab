@@ -162,10 +162,12 @@ class AdminDeleteUserRequest(BaseModel):
 
 @app.get("/auth/users")
 async def list_users():
+    """Return usernames for the login dropdown. Admin details available via /admin endpoints."""
     if not db.is_available():
         raise HTTPException(status_code=503, detail="Database not available")
     users = await db.list_users()
-    return {"users": users}
+    # Only expose usernames for the login screen — not IDs or admin status
+    return {"users": [{"username": u["username"]} for u in users]}
 
 
 @app.post("/auth/register")
@@ -267,6 +269,16 @@ async def _require_admin(admin_user_id: str) -> dict:
     if not admin or not admin.get("is_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
     return admin
+
+
+@app.get("/admin/users")
+async def admin_list_users(admin_user_id: str = Query(...)):
+    """Admin-only: list all users with IDs and admin status."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(admin_user_id)
+    users = await db.list_users()
+    return {"users": users}
 
 
 @app.post("/admin/reset-pin")
