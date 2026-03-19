@@ -8,3 +8,4 @@ asyncpg==0.30.0
 qdrant-client>=1.17.0
 python-multipart>=0.0.5
 pypdf>=5.0.0
+bcrypt>=4.0.0

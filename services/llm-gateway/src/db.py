@@ -40,33 +40,49 @@ def _pool_or_raise() -> asyncpg.Pool:
 # --- Conversations ---
 
 
-async def upsert_conversation(conversation_id: str, model: str, title: str) -> None:
+async def upsert_conversation(
+    conversation_id: str, model: str, title: str, user_id: str | None = None
+) -> None:
     """Insert a conversation or update its updated_at timestamp."""
     pool = _pool_or_raise()
     await pool.execute(
         """
-        INSERT INTO conversations (id, model, title, created_at, updated_at)
-        VALUES ($1, $2, $3, now(), now())
+        INSERT INTO conversations (id, model, title, user_id, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, now(), now())
         ON CONFLICT (id) DO UPDATE SET updated_at = now()
         """,
         uuid.UUID(conversation_id),
         model,
         title[:80],
+        uuid.UUID(user_id) if user_id else None,
     )
 
 
-async def list_conversations(limit: int = 50) -> list[dict]:
-    """Return recent conversations ordered by last activity."""
+async def list_conversations(limit: int = 50, user_id: str | None = None) -> list[dict]:
+    """Return recent conversations ordered by last activity, optionally filtered by user."""
     pool = _pool_or_raise()
-    rows = await pool.fetch(
-        """
-        SELECT id, title, model, created_at, updated_at
-        FROM conversations
-        ORDER BY updated_at DESC
-        LIMIT $1
-        """,
-        limit,
-    )
+    if user_id:
+        rows = await pool.fetch(
+            """
+            SELECT id, title, model, created_at, updated_at
+            FROM conversations
+            WHERE user_id = $1
+            ORDER BY updated_at DESC
+            LIMIT $2
+            """,
+            uuid.UUID(user_id),
+            limit,
+        )
+    else:
+        rows = await pool.fetch(
+            """
+            SELECT id, title, model, created_at, updated_at
+            FROM conversations
+            ORDER BY updated_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
     return [
         {
             "id": str(r["id"]),
@@ -198,6 +214,55 @@ async def delete_document(document_id: str) -> bool:
         uuid.UUID(document_id),
     )
     return result == "DELETE 1"
+
+
+# --- Users ---
+
+
+async def create_user(username: str, pin_hash: str) -> str:
+    """Create a user and return their ID."""
+    pool = _pool_or_raise()
+    row = await pool.fetchrow(
+        "INSERT INTO users (username, pin_hash) VALUES ($1, $2) RETURNING id",
+        username,
+        pin_hash,
+    )
+    return str(row["id"])
+
+
+async def get_user_by_username(username: str) -> dict | None:
+    """Return user by username or None."""
+    pool = _pool_or_raise()
+    row = await pool.fetchrow(
+        "SELECT id, username, pin_hash, preferences, created_at FROM users WHERE username = $1",
+        username,
+    )
+    if row is None:
+        return None
+    return {
+        "id": str(row["id"]),
+        "username": row["username"],
+        "pin_hash": row["pin_hash"],
+        "preferences": row["preferences"],
+    }
+
+
+async def list_users() -> list[dict]:
+    """Return all users (id + username only, no secrets)."""
+    pool = _pool_or_raise()
+    rows = await pool.fetch("SELECT id, username FROM users ORDER BY username")
+    return [{"id": str(r["id"]), "username": r["username"]} for r in rows]
+
+
+async def update_user_preferences(user_id: str, preferences: dict) -> None:
+    """Update a user's preferences JSON."""
+    pool = _pool_or_raise()
+    import json
+    await pool.execute(
+        "UPDATE users SET preferences = $1 WHERE id = $2",
+        json.dumps(preferences),
+        uuid.UUID(user_id),
+    )
 
 
 def is_available() -> bool:

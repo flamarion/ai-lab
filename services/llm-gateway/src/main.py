@@ -5,7 +5,8 @@ import sys
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, UploadFile
+import bcrypt
+from fastapi import FastAPI, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 # Add shared module to path (for local dev outside Docker)
@@ -97,6 +98,7 @@ class ChatRequest(BaseModel):
     use_rag: bool = False
     history: list[dict] = []
     conversation_id: str | None = None
+    user_id: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -105,7 +107,78 @@ class ChatResponse(BaseModel):
     conversation_id: str
 
 
-# --- Endpoints ---
+class RegisterRequest(BaseModel):
+    username: str
+    pin: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    pin: str
+
+
+class PreferencesRequest(BaseModel):
+    user_id: str
+    preferences: dict
+
+
+# --- Auth Endpoints ---
+
+
+@app.get("/auth/users")
+async def list_users():
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    users = await db.list_users()
+    return {"users": users}
+
+
+@app.post("/auth/register")
+async def register(request: RegisterRequest):
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    if len(request.pin) < 4:
+        raise HTTPException(status_code=400, detail="PIN must be at least 4 digits")
+    if not request.username.strip():
+        raise HTTPException(status_code=400, detail="Username is required")
+
+    existing = await db.get_user_by_username(request.username.strip())
+    if existing:
+        raise HTTPException(status_code=409, detail="Username already taken")
+
+    pin_hash = bcrypt.hashpw(request.pin.encode(), bcrypt.gensalt()).decode()
+    user_id = await db.create_user(request.username.strip(), pin_hash)
+    return {"user_id": user_id, "username": request.username.strip()}
+
+
+@app.post("/auth/login")
+async def login(request: LoginRequest):
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    user = await db.get_user_by_username(request.username.strip())
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or PIN")
+
+    if not bcrypt.checkpw(request.pin.encode(), user["pin_hash"].encode()):
+        raise HTTPException(status_code=401, detail="Invalid username or PIN")
+
+    return {
+        "user_id": user["id"],
+        "username": user["username"],
+        "preferences": user["preferences"],
+    }
+
+
+@app.patch("/auth/preferences")
+async def update_preferences(request: PreferencesRequest):
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await db.update_user_preferences(request.user_id, request.preferences)
+    return {"status": "updated"}
+
+
+# --- Core Endpoints ---
 
 
 @app.get("/health")
@@ -121,7 +194,8 @@ async def health():
 async def list_models():
     try:
         models = await client.list_models()
-        return {"models": [m["name"] for m in models]}
+        # Filter out embedding models — they're not for chat
+        return {"models": [m["name"] for m in models if "embed" not in m["name"].lower()]}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to reach Ollama: {e}")
 
@@ -164,7 +238,6 @@ async def chat(request: ChatRequest):
                 context = "\n---\n".join(context_parts)
 
                 rag_system = _RAG_SYSTEM_PROMPT.format(context=context)
-                # Prepend RAG context as the first system message
                 messages.insert(0, {"role": "system", "content": rag_system})
                 logger.info("RAG: injected %d chunks into prompt", len(results))
             else:
@@ -196,7 +269,7 @@ async def chat(request: ChatRequest):
     if db.is_available():
         try:
             title = request.message[:80] if is_new_conversation else ""
-            await db.upsert_conversation(conversation_id, model, title)
+            await db.upsert_conversation(conversation_id, model, title, request.user_id)
             await db.add_message(conversation_id, "user", request.message)
             await db.add_message(conversation_id, "assistant", response_text)
         except Exception as e:
@@ -235,7 +308,6 @@ async def ingest_file(file: UploadFile):
     filename = file.filename or "unknown"
     content_bytes = await file.read()
 
-    # Load document content
     try:
         text = chunker.load_bytes(content_bytes, filename)
     except ValueError as e:
@@ -244,19 +316,16 @@ async def ingest_file(file: UploadFile):
     if not text.strip():
         raise HTTPException(status_code=400, detail="Document is empty")
 
-    # Chunk the document
     chunks = chunker.chunk_text(text)
     if not chunks:
         raise HTTPException(status_code=400, detail="No chunks produced from document")
 
-    # Embed all chunks in a batch (with search_document prefix)
     prefixed_texts = [f"search_document: {c['text']}" for c in chunks]
     try:
         vectors = await client.embed(prefixed_texts)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Embedding failed: {e}")
 
-    # Record document in Postgres
     document_id = None
     if db.is_available():
         try:
@@ -267,7 +336,6 @@ async def ingest_file(file: UploadFile):
     if not document_id:
         document_id = str(uuid.uuid4())
 
-    # Store vectors in Qdrant
     vector_store.upsert_chunks(chunks, vectors, document_id, filename)
 
     logger.info("Ingested %s: %d chunks, doc_id=%s", filename, len(chunks), document_id[:8])
@@ -288,14 +356,12 @@ async def list_documents():
 
 @app.delete("/documents/{document_id}")
 async def delete_document(document_id: str):
-    # Remove vectors from Qdrant
     if vector_store.is_available():
         try:
             vector_store.delete_by_document(document_id)
         except Exception as e:
             logger.warning("Failed to delete vectors from Qdrant: %s", e)
 
-    # Remove metadata from Postgres
     if db.is_available():
         deleted = await db.delete_document(document_id)
         if not deleted:
@@ -308,10 +374,10 @@ async def delete_document(document_id: str):
 
 
 @app.get("/conversations")
-async def list_conversations():
+async def list_conversations(user_id: str | None = Query(None)):
     if not db.is_available():
         raise HTTPException(status_code=503, detail="Database not available")
-    conversations = await db.list_conversations()
+    conversations = await db.list_conversations(user_id=user_id)
     return {"conversations": conversations}
 
 
