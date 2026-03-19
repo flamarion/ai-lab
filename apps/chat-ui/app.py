@@ -1,3 +1,4 @@
+import html
 import os
 from datetime import datetime, timezone
 
@@ -102,16 +103,14 @@ section[data-testid="stSidebar"] button[kind="tertiary"]:hover {
     color: #555;
 }
 
-/* ---- Model chip shown above chat ---- */
-.model-chip {
-    display: inline-block;
-    background: #f0f0fa;
-    color: #6366f1;
-    padding: 3px 12px;
-    border-radius: 12px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    margin-bottom: 0.5rem;
+/* ---- Login screen ---- */
+.login-box {
+    max-width: 360px;
+    margin: 4rem auto;
+    padding: 2rem;
+    border: 1px solid #e8e8f0;
+    border-radius: 16px;
+    text-align: center;
 }
 </style>
 """,
@@ -144,8 +143,40 @@ def _relative_time(iso_str: str) -> str:
         return ""
 
 
+def _save_preferences():
+    """Save current settings to the user's profile on the gateway."""
+    if not st.session_state.get("user_id"):
+        return
+    prefs = {
+        "model": st.session_state.get("pref_model", "Auto (recommended)"),
+        "temperature": st.session_state.get("pref_temperature", 0.7),
+    }
+    try:
+        httpx.patch(
+            f"{GATEWAY_URL}/auth/preferences",
+            json={"user_id": st.session_state.user_id, "preferences": prefs},
+            timeout=5.0,
+        )
+    except Exception:
+        pass  # non-critical
+
+
 # --- Session state init ---
 
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "conversation_id" not in st.session_state:
+    st.session_state.conversation_id = None
+if "user_id" not in st.session_state:
+    st.session_state.user_id = None
+if "username" not in st.session_state:
+    st.session_state.username = None
+if "preferences" not in st.session_state:
+    st.session_state.preferences = {}
+if "is_admin" not in st.session_state:
+    st.session_state.is_admin = False
+
+# Fetch models once per session
 if "models" not in st.session_state:
     try:
         resp = httpx.get(f"{GATEWAY_URL}/models", timeout=10.0)
@@ -153,15 +184,106 @@ if "models" not in st.session_state:
     except Exception:
         st.session_state.models = []
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "conversation_id" not in st.session_state:
-    st.session_state.conversation_id = None
+
+# ============================================================
+# LOGIN SCREEN — shown when no user is logged in
+# ============================================================
+
+if not st.session_state.user_id:
+    st.markdown("#### 🧪 AI Lab")
+
+    # Fetch existing users for the dropdown
+    users = []
+    try:
+        resp = httpx.get(f"{GATEWAY_URL}/auth/users", timeout=5.0)
+        if resp.status_code == 200:
+            users = resp.json().get("users", [])
+    except Exception:
+        pass
+
+    tab_login, tab_register = st.tabs(["Sign in", "Create account"])
+
+    with tab_login:
+        if users:
+            usernames = [u["username"] for u in users]
+            selected_user = st.selectbox("Who are you?", usernames, key="login_user")
+            pin_input = st.text_input("PIN", type="password", max_chars=8, key="login_pin")
+            if st.button("Sign in", use_container_width=True, type="primary"):
+                if pin_input:
+                    try:
+                        resp = httpx.post(
+                            f"{GATEWAY_URL}/auth/login",
+                            json={"username": selected_user, "pin": pin_input},
+                            timeout=10.0,
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            st.session_state.user_id = data["user_id"]
+                            st.session_state.username = data["username"]
+                            st.session_state.is_admin = data.get("is_admin", False)
+                            st.session_state.preferences = data.get("preferences", {})
+                            st.rerun()
+                        else:
+                            st.error("Invalid PIN")
+                    except Exception:
+                        st.error("Could not connect to gateway")
+                else:
+                    st.warning("Enter your PIN")
+        else:
+            st.info("No users yet. Create an account to get started.")
+
+    with tab_register:
+        new_username = st.text_input("Choose a username", key="reg_user")
+        new_pin = st.text_input("Choose a PIN (4+ digits)", type="password", max_chars=8, key="reg_pin")
+        if st.button("Create account", use_container_width=True):
+            if new_username.strip() and len(new_pin) >= 4:
+                try:
+                    resp = httpx.post(
+                        f"{GATEWAY_URL}/auth/register",
+                        json={"username": new_username.strip(), "pin": new_pin},
+                        timeout=10.0,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        st.session_state.user_id = data["user_id"]
+                        st.session_state.username = data["username"]
+                        st.session_state.is_admin = data.get("is_admin", False)
+                        st.session_state.preferences = {}
+                        st.rerun()
+                    else:
+                        st.error(resp.json().get("detail", "Registration failed"))
+                except Exception:
+                    st.error("Could not connect to gateway")
+            else:
+                st.warning("Username required and PIN must be at least 4 digits")
+
+    st.stop()  # Don't render the rest of the app
+
+
+# ============================================================
+# MAIN APP — user is logged in
+# ============================================================
+
+# Load preferences into defaults
+prefs = st.session_state.preferences
+default_model = prefs.get("model", "Auto (recommended)")
+default_temp = prefs.get("temperature", 0.7)
 
 # --- Sidebar ---
 with st.sidebar:
-    # App branding
-    st.markdown("#### 🧪 AI Lab")
+    # Header with username and logout
+    col_brand, col_logout = st.columns([4, 1])
+    with col_brand:
+        st.markdown(f"#### 🧪 {st.session_state.username}")
+    with col_logout:
+        if st.button("↩", help="Sign out", type="tertiary"):
+            st.session_state.user_id = None
+            st.session_state.username = None
+            st.session_state.is_admin = False
+            st.session_state.preferences = {}
+            st.session_state.messages = []
+            st.session_state.conversation_id = None
+            st.rerun()
 
     # New Chat
     if st.button("✨  New Chat", use_container_width=True, type="primary"):
@@ -171,41 +293,45 @@ with st.sidebar:
 
     st.divider()
 
-    # Settings (pinned above conversations so they don't get pushed down)
+    # Settings — Model + Temperature visible, rest in Advanced
     st.caption("SETTINGS")
 
     if st.session_state.models:
         model_options = ["Auto (recommended)"] + st.session_state.models
+        default_idx = 0
+        if default_model in model_options:
+            default_idx = model_options.index(default_model)
         selected_option = st.selectbox(
             "Model",
             model_options,
-            help="Auto routes to the best model based on your message (code → qwen3.5, general → mistral). Pick a specific model to override.",
+            index=default_idx,
+            key="pref_model",
+            help="Auto routes to the best model based on your message.",
+            on_change=_save_preferences,
         )
         if selected_option == "Auto (recommended)":
-            selected_model = None  # gateway will use its default
+            selected_model = None
         else:
             selected_model = selected_option
     else:
         selected_model = st.text_input("Model", value="mistral:7b")
         st.warning("Could not fetch models from gateway")
 
-    temperature = st.slider("Temperature", 0.0, 1.0, 0.7, 0.1)
+    temperature = st.slider(
+        "Temperature", 0.0, 1.0, default_temp, 0.1,
+        key="pref_temperature",
+        on_change=_save_preferences,
+    )
 
     with st.expander("Advanced"):
         num_predict = st.slider(
             "Max response length",
-            64,
-            4096,
-            1024,
-            64,
+            64, 4096, 1024, 64,
             help="Limit how long the response can be (in tokens, ~0.75 words each)",
         )
         top_p = st.slider(
             "Top P",
-            0.0,
-            1.0,
-            0.9,
-            0.05,
+            0.0, 1.0, 0.9, 0.05,
             help="Controls diversity. Lower = more focused, higher = more creative",
         )
         system_prompt = st.text_area(
@@ -221,12 +347,38 @@ with st.sidebar:
             help="Ground answers in your uploaded documents",
         )
 
+        # File upload for RAG ingestion
+        st.caption("UPLOAD DOCUMENT")
+        uploaded_file = st.file_uploader(
+            "Upload a file to use with RAG",
+            type=["txt", "md", "pdf", "py", "js", "go", "sh", "yaml", "json", "sql"],
+            label_visibility="collapsed",
+        )
+        if uploaded_file is not None:
+            if st.button("Ingest document", use_container_width=True):
+                with st.spinner("Processing..."):
+                    try:
+                        resp = httpx.post(
+                            f"{GATEWAY_URL}/ingest",
+                            files={"file": (uploaded_file.name, uploaded_file.getvalue())},
+                            timeout=120.0,
+                        )
+                        resp.raise_for_status()
+                        data = resp.json()
+                        st.success(f"Ingested {data['source']} ({data['num_chunks']} chunks)")
+                    except Exception as e:
+                        st.error(f"Failed to ingest: {e}")
+
     st.divider()
 
-    # Conversation history (scrollable at the bottom)
+    # Conversation history — filtered by user
     st.caption("RECENT CONVERSATIONS")
     try:
-        conv_resp = httpx.get(f"{GATEWAY_URL}/conversations", timeout=10.0)
+        conv_resp = httpx.get(
+            f"{GATEWAY_URL}/conversations",
+            params={"user_id": st.session_state.user_id},
+            timeout=10.0,
+        )
         if conv_resp.status_code == 200:
             conversations = conv_resp.json().get("conversations", [])
             if not conversations:
@@ -279,15 +431,128 @@ with st.sidebar:
     except Exception:
         st.caption("Conversation history unavailable")
 
+    st.divider()
+
+    # Account section — change PIN
+    with st.expander("Account"):
+        st.caption("CHANGE PIN")
+        current_pin = st.text_input("Current PIN", type="password", max_chars=8, key="chg_cur_pin")
+        new_pin = st.text_input("New PIN (4-8 digits)", type="password", max_chars=8, key="chg_new_pin")
+        if st.button("Update PIN", use_container_width=True):
+            if current_pin and new_pin and len(new_pin) >= 4:
+                try:
+                    resp = httpx.post(
+                        f"{GATEWAY_URL}/auth/change-pin",
+                        json={
+                            "user_id": st.session_state.user_id,
+                            "current_pin": current_pin,
+                            "new_pin": new_pin,
+                        },
+                        timeout=10.0,
+                    )
+                    if resp.status_code == 200:
+                        st.success("PIN updated")
+                    else:
+                        st.error(resp.json().get("detail", "Failed"))
+                except Exception:
+                    st.error("Could not connect to gateway")
+            else:
+                st.warning("Enter current PIN and new PIN (4+ digits)")
+
+    # Admin panel — only visible to admins
+    if st.session_state.is_admin:
+        with st.expander("Admin"):
+            st.caption("USER MANAGEMENT")
+            try:
+                users_resp = httpx.get(
+                    f"{GATEWAY_URL}/admin/users",
+                    params={"admin_user_id": st.session_state.user_id},
+                    timeout=5.0,
+                )
+                all_users = users_resp.json().get("users", []) if users_resp.status_code == 200 else []
+            except Exception:
+                all_users = []
+
+            for u in all_users:
+                col_name, col_admin, col_del = st.columns([3, 1, 1])
+                with col_name:
+                    admin_badge = " (admin)" if u.get("is_admin") else ""
+                    st.text(f"{u['username']}{admin_badge}")
+                with col_admin:
+                    if u["id"] != st.session_state.user_id:
+                        new_admin = not u.get("is_admin", False)
+                        label = "+" if new_admin else "-"
+                        if st.button(label, key=f"adm_{u['id']}", help="Toggle admin"):
+                            try:
+                                httpx.post(
+                                    f"{GATEWAY_URL}/admin/toggle-admin",
+                                    json={
+                                        "admin_user_id": st.session_state.user_id,
+                                        "target_user_id": u["id"],
+                                        "is_admin": new_admin,
+                                    },
+                                    timeout=10.0,
+                                )
+                                st.rerun()
+                            except Exception:
+                                st.error("Failed")
+                with col_del:
+                    if u["id"] != st.session_state.user_id:
+                        if st.button("🗑", key=f"delusr_{u['id']}", type="tertiary"):
+                            try:
+                                httpx.post(
+                                    f"{GATEWAY_URL}/admin/delete-user",
+                                    json={
+                                        "admin_user_id": st.session_state.user_id,
+                                        "target_user_id": u["id"],
+                                    },
+                                    timeout=10.0,
+                                )
+                                st.rerun()
+                            except Exception:
+                                st.error("Failed")
+
+            st.caption("RESET USER PIN")
+            if all_users:
+                other_users = [u for u in all_users if u["id"] != st.session_state.user_id]
+                if other_users:
+                    reset_user = st.selectbox(
+                        "User",
+                        [u["username"] for u in other_users],
+                        key="reset_user_select",
+                    )
+                    reset_pin = st.text_input("New PIN", type="password", max_chars=8, key="reset_pin_input")
+                    if st.button("Reset PIN", use_container_width=True):
+                        target = next(u for u in other_users if u["username"] == reset_user)
+                        if reset_pin and len(reset_pin) >= 4:
+                            try:
+                                resp = httpx.post(
+                                    f"{GATEWAY_URL}/admin/reset-pin",
+                                    json={
+                                        "admin_user_id": st.session_state.user_id,
+                                        "target_user_id": target["id"],
+                                        "new_pin": reset_pin,
+                                    },
+                                    timeout=10.0,
+                                )
+                                if resp.status_code == 200:
+                                    st.success(f"PIN reset for {reset_user}")
+                                else:
+                                    st.error(resp.json().get("detail", "Failed"))
+                            except Exception:
+                                st.error("Could not connect to gateway")
+                        else:
+                            st.warning("Enter a PIN (4+ digits)")
+
 # --- Main chat area ---
 
 # Welcome screen when no messages
 if not st.session_state.messages:
     st.markdown(
-        """
+        f"""
     <div class="welcome-box">
         <div class="welcome-icon">🧪</div>
-        <div class="welcome-title">Welcome to AI Lab</div>
+        <div class="welcome-title">Hey {html.escape(st.session_state.username or "")}!</div>
         <div class="welcome-sub">Your personal AI assistant — powered by local models</div>
         <div style="margin-top: 1.5rem;">
             <div class="hint-card">💡 Ask me anything</div>
@@ -317,6 +582,7 @@ if prompt := st.chat_input("Type your message..."):
                 payload = {
                     "message": prompt,
                     "temperature": temperature,
+                    "user_id": st.session_state.user_id,
                 }
                 if selected_model:
                     payload["model"] = selected_model

@@ -1,11 +1,14 @@
 import asyncio
 import logging
 import os
+import re
 import sys
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, UploadFile
+import bcrypt
+from fastapi import FastAPI, HTTPException, Query, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 # Add shared module to path (for local dev outside Docker)
@@ -28,6 +31,16 @@ _RAG_SYSTEM_PROMPT = (
     "do not make up an answer.\n\n"
     "Context:\n{context}"
 )
+
+_PIN_PATTERN = re.compile(r"^\d{4,8}$")
+
+
+def _validate_uuid(value: str) -> uuid.UUID:
+    """Parse a UUID string or raise 400."""
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid UUID: {value}")
 
 
 @asynccontextmanager
@@ -97,6 +110,7 @@ class ChatRequest(BaseModel):
     use_rag: bool = False
     history: list[dict] = []
     conversation_id: str | None = None
+    user_id: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -105,7 +119,222 @@ class ChatResponse(BaseModel):
     conversation_id: str
 
 
-# --- Endpoints ---
+class RegisterRequest(BaseModel):
+    username: str
+    pin: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    pin: str
+
+
+class PreferencesRequest(BaseModel):
+    user_id: str
+    preferences: dict
+
+
+class ChangePinRequest(BaseModel):
+    user_id: str
+    current_pin: str
+    new_pin: str
+
+
+class AdminResetPinRequest(BaseModel):
+    admin_user_id: str
+    target_user_id: str
+    new_pin: str
+
+
+class AdminToggleRequest(BaseModel):
+    admin_user_id: str
+    target_user_id: str
+    is_admin: bool
+
+
+class AdminDeleteUserRequest(BaseModel):
+    admin_user_id: str
+    target_user_id: str
+
+
+# --- Auth Endpoints ---
+
+
+@app.get("/auth/users")
+async def list_users():
+    """Return usernames for the login dropdown. Admin details available via /admin endpoints."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    users = await db.list_users()
+    # Only expose usernames for the login screen — not IDs or admin status
+    return {"users": [{"username": u["username"]} for u in users]}
+
+
+@app.post("/auth/register")
+async def register(request: RegisterRequest):
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    if not _PIN_PATTERN.match(request.pin):
+        raise HTTPException(status_code=400, detail="PIN must be 4-8 digits")
+    if not request.username.strip():
+        raise HTTPException(status_code=400, detail="Username is required")
+
+    existing = await db.get_user_by_username(request.username.strip())
+    if existing:
+        raise HTTPException(status_code=409, detail="Username already taken")
+
+    pin_hash = await run_in_threadpool(
+        bcrypt.hashpw, request.pin.encode(), bcrypt.gensalt()
+    )
+
+    # First user is auto-admin
+    user_count = await db.count_users()
+    is_admin = user_count == 0
+
+    user_id = await db.create_user(request.username.strip(), pin_hash.decode(), is_admin)
+    return {"user_id": user_id, "username": request.username.strip(), "is_admin": is_admin}
+
+
+@app.post("/auth/login")
+async def login(request: LoginRequest):
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    user = await db.get_user_by_username(request.username.strip())
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or PIN")
+
+    valid = await run_in_threadpool(
+        bcrypt.checkpw, request.pin.encode(), user["pin_hash"].encode()
+    )
+    if not valid:
+        raise HTTPException(status_code=401, detail="Invalid username or PIN")
+
+    return {
+        "user_id": user["id"],
+        "username": user["username"],
+        "is_admin": user["is_admin"],
+        "preferences": user["preferences"],
+    }
+
+
+@app.patch("/auth/preferences")
+async def update_preferences(request: PreferencesRequest):
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    _validate_uuid(request.user_id)
+    updated = await db.update_user_preferences(request.user_id, request.preferences)
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"status": "updated"}
+
+
+@app.post("/auth/change-pin")
+async def change_pin(request: ChangePinRequest):
+    """Allow a user to change their own PIN."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    if not _PIN_PATTERN.match(request.new_pin):
+        raise HTTPException(status_code=400, detail="New PIN must be 4-8 digits")
+
+    # Verify current PIN by looking up the user
+    _validate_uuid(request.user_id)
+    users = await db.list_users()
+    target = next((u for u in users if u["id"] == request.user_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user = await db.get_user_by_username(target["username"])
+    valid = await run_in_threadpool(
+        bcrypt.checkpw, request.current_pin.encode(), user["pin_hash"].encode()
+    )
+    if not valid:
+        raise HTTPException(status_code=401, detail="Current PIN is incorrect")
+
+    new_hash = await run_in_threadpool(
+        bcrypt.hashpw, request.new_pin.encode(), bcrypt.gensalt()
+    )
+    await db.update_user_pin(request.user_id, new_hash.decode())
+    return {"status": "pin_changed"}
+
+
+# --- Admin Endpoints ---
+
+
+async def _require_admin(admin_user_id: str) -> dict:
+    """Validate that the given user_id belongs to an admin."""
+    _validate_uuid(admin_user_id)
+    users = await db.list_users()
+    admin = next((u for u in users if u["id"] == admin_user_id), None)
+    if not admin or not admin.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return admin
+
+
+@app.get("/admin/users")
+async def admin_list_users(admin_user_id: str = Query(...)):
+    """Admin-only: list all users with IDs and admin status."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(admin_user_id)
+    users = await db.list_users()
+    return {"users": users}
+
+
+@app.post("/admin/reset-pin")
+async def admin_reset_pin(request: AdminResetPinRequest):
+    """Admin resets another user's PIN."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(request.admin_user_id)
+    if not _PIN_PATTERN.match(request.new_pin):
+        raise HTTPException(status_code=400, detail="New PIN must be 4-8 digits")
+
+    _validate_uuid(request.target_user_id)
+    new_hash = await run_in_threadpool(
+        bcrypt.hashpw, request.new_pin.encode(), bcrypt.gensalt()
+    )
+    updated = await db.update_user_pin(request.target_user_id, new_hash.decode())
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"status": "pin_reset"}
+
+
+@app.post("/admin/toggle-admin")
+async def admin_toggle_admin(request: AdminToggleRequest):
+    """Admin toggles another user's admin status."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(request.admin_user_id)
+    _validate_uuid(request.target_user_id)
+
+    if request.admin_user_id == request.target_user_id:
+        raise HTTPException(status_code=400, detail="Cannot change your own admin status")
+
+    updated = await db.update_user_admin(request.target_user_id, request.is_admin)
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"status": "updated", "is_admin": request.is_admin}
+
+
+@app.post("/admin/delete-user")
+async def admin_delete_user(request: AdminDeleteUserRequest):
+    """Admin deletes a user."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(request.admin_user_id)
+    _validate_uuid(request.target_user_id)
+
+    if request.admin_user_id == request.target_user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+
+    deleted = await db.delete_user(request.target_user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"status": "deleted"}
+
+
+# --- Core Endpoints ---
 
 
 @app.get("/health")
@@ -121,7 +350,7 @@ async def health():
 async def list_models():
     try:
         models = await client.list_models()
-        return {"models": [m["name"] for m in models]}
+        return {"models": [m["name"] for m in models if "embed" not in m["name"].lower()]}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to reach Ollama: {e}")
 
@@ -164,7 +393,6 @@ async def chat(request: ChatRequest):
                 context = "\n---\n".join(context_parts)
 
                 rag_system = _RAG_SYSTEM_PROMPT.format(context=context)
-                # Prepend RAG context as the first system message
                 messages.insert(0, {"role": "system", "content": rag_system})
                 logger.info("RAG: injected %d chunks into prompt", len(results))
             else:
@@ -196,7 +424,7 @@ async def chat(request: ChatRequest):
     if db.is_available():
         try:
             title = request.message[:80] if is_new_conversation else ""
-            await db.upsert_conversation(conversation_id, model, title)
+            await db.upsert_conversation(conversation_id, model, title, request.user_id)
             await db.add_message(conversation_id, "user", request.message)
             await db.add_message(conversation_id, "assistant", response_text)
         except Exception as e:
@@ -235,7 +463,6 @@ async def ingest_file(file: UploadFile):
     filename = file.filename or "unknown"
     content_bytes = await file.read()
 
-    # Load document content
     try:
         text = chunker.load_bytes(content_bytes, filename)
     except ValueError as e:
@@ -244,19 +471,16 @@ async def ingest_file(file: UploadFile):
     if not text.strip():
         raise HTTPException(status_code=400, detail="Document is empty")
 
-    # Chunk the document
     chunks = chunker.chunk_text(text)
     if not chunks:
         raise HTTPException(status_code=400, detail="No chunks produced from document")
 
-    # Embed all chunks in a batch (with search_document prefix)
     prefixed_texts = [f"search_document: {c['text']}" for c in chunks]
     try:
         vectors = await client.embed(prefixed_texts)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Embedding failed: {e}")
 
-    # Record document in Postgres
     document_id = None
     if db.is_available():
         try:
@@ -267,7 +491,6 @@ async def ingest_file(file: UploadFile):
     if not document_id:
         document_id = str(uuid.uuid4())
 
-    # Store vectors in Qdrant
     vector_store.upsert_chunks(chunks, vectors, document_id, filename)
 
     logger.info("Ingested %s: %d chunks, doc_id=%s", filename, len(chunks), document_id[:8])
@@ -288,14 +511,12 @@ async def list_documents():
 
 @app.delete("/documents/{document_id}")
 async def delete_document(document_id: str):
-    # Remove vectors from Qdrant
     if vector_store.is_available():
         try:
             vector_store.delete_by_document(document_id)
         except Exception as e:
             logger.warning("Failed to delete vectors from Qdrant: %s", e)
 
-    # Remove metadata from Postgres
     if db.is_available():
         deleted = await db.delete_document(document_id)
         if not deleted:
@@ -308,10 +529,12 @@ async def delete_document(document_id: str):
 
 
 @app.get("/conversations")
-async def list_conversations():
+async def list_conversations(user_id: str | None = Query(None)):
     if not db.is_available():
         raise HTTPException(status_code=503, detail="Database not available")
-    conversations = await db.list_conversations()
+    if user_id:
+        _validate_uuid(user_id)
+    conversations = await db.list_conversations(user_id=user_id)
     return {"conversations": conversations}
 
 
