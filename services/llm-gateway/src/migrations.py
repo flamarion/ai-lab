@@ -36,14 +36,25 @@ async def run_migrations(pool: asyncpg.Pool) -> int:
         logger.warning("Migrations directory not found: %s", migrations_dir)
         return 0
 
-    # Use an advisory lock to prevent concurrent migration runs
-    # (e.g., two gateway instances starting at the same time)
-    async with pool.acquire() as lock_conn:
-        await lock_conn.execute("SELECT pg_advisory_lock($1)", _MIGRATION_LOCK_ID)
+    # Discover migration files (sorted by name = sorted by number)
+    sql_files = sorted(
+        f for f in migrations_dir.iterdir()
+        if f.suffix == ".sql" and f.name[0].isdigit()
+    )
+
+    if not sql_files:
+        logger.info("No migration files found in %s", migrations_dir)
+        return 0
+
+    # Acquire a single connection for the entire migration run.
+    # Advisory lock is connection-scoped, so all work must happen
+    # on this same connection to be protected by the lock.
+    async with pool.acquire() as conn:
+        await conn.execute("SELECT pg_advisory_lock($1)", _MIGRATION_LOCK_ID)
         try:
-            applied_count = await _apply_pending(pool, sql_files)
+            applied_count = await _apply_pending(conn, sql_files)
         finally:
-            await lock_conn.execute("SELECT pg_advisory_unlock($1)", _MIGRATION_LOCK_ID)
+            await conn.execute("SELECT pg_advisory_unlock($1)", _MIGRATION_LOCK_ID)
 
     if applied_count == 0:
         logger.info("Database is up to date (no pending migrations)")
@@ -53,10 +64,10 @@ async def run_migrations(pool: asyncpg.Pool) -> int:
     return applied_count
 
 
-async def _apply_pending(pool: asyncpg.Pool, sql_files: list[Path]) -> int:
-    """Apply pending migrations inside the advisory lock."""
+async def _apply_pending(conn: asyncpg.Connection, sql_files: list[Path]) -> int:
+    """Apply pending migrations on the locked connection."""
     # Ensure the tracking table exists
-    await pool.execute("""
+    await conn.execute("""
         CREATE TABLE IF NOT EXISTS _migrations (
             id          SERIAL PRIMARY KEY,
             filename    TEXT NOT NULL UNIQUE,
@@ -65,7 +76,7 @@ async def _apply_pending(pool: asyncpg.Pool, sql_files: list[Path]) -> int:
     """)
 
     # Get already-applied migrations
-    rows = await pool.fetch("SELECT filename FROM _migrations ORDER BY filename")
+    rows = await conn.fetch("SELECT filename FROM _migrations ORDER BY filename")
     applied = {r["filename"] for r in rows}
 
     applied_count = 0
@@ -76,13 +87,12 @@ async def _apply_pending(pool: asyncpg.Pool, sql_files: list[Path]) -> int:
         sql = sql_file.read_text(encoding="utf-8")
         logger.info("Applying migration: %s", sql_file.name)
 
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(sql)
-                await conn.execute(
-                    "INSERT INTO _migrations (filename) VALUES ($1)",
-                    sql_file.name,
-                )
+        async with conn.transaction():
+            await conn.execute(sql)
+            await conn.execute(
+                "INSERT INTO _migrations (filename) VALUES ($1)",
+                sql_file.name,
+            )
 
         applied_count += 1
         logger.info("Migration applied: %s", sql_file.name)
