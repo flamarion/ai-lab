@@ -253,14 +253,10 @@ async def change_pin(request: ChangePinRequest):
     if not _PIN_PATTERN.match(request.new_pin):
         raise HTTPException(status_code=400, detail="New PIN must be 4-8 digits")
 
-    # Verify current PIN by looking up the user
     _validate_uuid(request.user_id)
-    users = await db.list_users()
-    target = next((u for u in users if u["id"] == request.user_id), None)
-    if not target:
+    user = await db.get_user_by_id(request.user_id)
+    if not user:
         raise HTTPException(status_code=404, detail="User not found")
-
-    user = await db.get_user_by_username(target["username"])
     valid = await run_in_threadpool(
         bcrypt.checkpw, request.current_pin.encode(), user["pin_hash"].encode()
     )

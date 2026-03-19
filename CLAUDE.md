@@ -153,10 +153,15 @@ Current migrations:
 - `003_users.sql` — users table (username, PIN hash, preferences) + conversations.user_id FK
 - `004_user_admin.sql` — is_admin column on users
 - `005_user_delete_cascade.sql` — ON DELETE SET NULL for conversations.user_id FK
+- `006_user_child_flag.sql` — is_child column on users (for future guardrails)
 
 Two compose files, one per VM:
-- `infra/docker/docker-compose.yml` — ai-app VM (gateway + chat UI)
+- `infra/docker/docker-compose.yml` — ai-app VM (nginx + gateway + chat UI)
 - `infra/docker/docker-compose.data.yml` — ai-data VM (Postgres + Qdrant)
+
+### Reverse Proxy
+
+nginx sits in front of Streamlit and the gateway on port 80. Family accesses `http://<ai-app-vm-ip>` — no port needed. Config at `infra/docker/nginx/default.conf`. The gateway API is available at `/api/` (prefix stripped).
 
 ### RAG Pipeline
 
