@@ -8,6 +8,17 @@ import streamlit as st
 
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:8000")
 
+# All file types supported for upload (matches chunker.SUPPORTED_EXTENSIONS)
+_ALL_TYPES = [
+    "txt", "md", "rst", "csv", "tsv", "log",
+    "pdf", "docx", "xlsx",
+    "py", "js", "ts", "go", "rs", "rb", "java", "kt",
+    "c", "cpp", "h", "hpp", "cs", "sh", "bash", "zsh",
+    "yaml", "yml", "toml", "json", "xml", "html", "css",
+    "sql", "tf", "hcl", "ini", "cfg", "env",
+    "r", "scala", "lua", "pl", "php", "swift",
+]
+
 # --- Page config ---
 st.set_page_config(page_title="AI Lab", page_icon="🧪", layout="centered")
 
@@ -369,29 +380,37 @@ if st.session_state.page == "Chat":
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
 
-    # File upload — attach a document to ground the conversation
-    uploaded_file = st.file_uploader(
-        "Attach a document",
-        type=["txt", "md", "pdf", "py", "js", "go", "sh", "yaml", "json", "sql"],
+    # File upload — attach documents to ground the conversation
+    uploaded_files = st.file_uploader(
+        "Attach documents",
+        type=_ALL_TYPES,
+        accept_multiple_files=True,
         key="chat_file_upload",
         label_visibility="collapsed",
     )
-    if uploaded_file is not None and not st.session_state.get("_last_ingested") == uploaded_file.name:
-        with st.spinner(f"Processing {uploaded_file.name}..."):
-            try:
-                resp = httpx.post(
-                    f"{GATEWAY_URL}/ingest",
-                    files={"file": (uploaded_file.name, uploaded_file.getvalue())},
-                    timeout=120.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                st.session_state["_last_ingested"] = uploaded_file.name
-                st.session_state["adv_use_rag"] = True
-                use_rag = True
-                st.success(f"Uploaded {data['source']} ({data['num_chunks']} chunks) — RAG enabled")
-            except Exception as e:
-                st.error(f"Failed to process file: {e}")
+    if uploaded_files:
+        ingested = st.session_state.get("_ingested_files", set())
+        for uf in uploaded_files:
+            if uf.name in ingested:
+                continue
+            with st.spinner(f"Processing {uf.name}..."):
+                try:
+                    resp = httpx.post(
+                        f"{GATEWAY_URL}/ingest",
+                        files={"file": (uf.name, uf.getvalue())},
+                        timeout=120.0,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    ingested.add(uf.name)
+                    st.session_state["_ingested_files"] = ingested
+                    st.session_state["adv_use_rag"] = True
+                    use_rag = True
+                    st.success(f"{data['source']} ({data['num_chunks']} chunks)")
+                except Exception as e:
+                    st.error(f"Failed to process {uf.name}: {e}")
+        if ingested:
+            st.caption("RAG enabled — ask questions about your documents")
 
     # Chat input
     if prompt := st.chat_input("Type your message..."):
@@ -505,25 +524,28 @@ elif st.session_state.page == "Settings":
     )
 
     st.divider()
-    st.subheader("Upload Document")
-    st.caption("Upload files to use with RAG. Supported: text, markdown, PDF, code.")
-    uploaded_file = st.file_uploader(
-        "Upload a file",
-        type=["txt", "md", "pdf", "py", "js", "go", "sh", "yaml", "json", "sql"],
+    st.subheader("Upload Documents")
+    st.caption("Supported: PDF, DOCX, XLSX, text, markdown, code, config files.")
+    settings_files = st.file_uploader(
+        "Upload files",
+        type=_ALL_TYPES,
+        accept_multiple_files=True,
         label_visibility="collapsed",
+        key="settings_file_upload",
     )
-    if uploaded_file is not None:
-        if st.button("Ingest document", use_container_width=True, type="primary"):
-            with st.spinner("Processing..."):
-                try:
-                    resp = httpx.post(
-                        f"{GATEWAY_URL}/ingest",
-                        files={"file": (uploaded_file.name, uploaded_file.getvalue())},
-                        timeout=120.0,
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    st.success(f"Ingested {data['source']} ({data['num_chunks']} chunks)")
+    if settings_files:
+        if st.button("Ingest all", use_container_width=True, type="primary"):
+            for sf in settings_files:
+                with st.spinner(f"Processing {sf.name}..."):
+                    try:
+                        resp = httpx.post(
+                            f"{GATEWAY_URL}/ingest",
+                            files={"file": (sf.name, sf.getvalue())},
+                            timeout=120.0,
+                        )
+                        resp.raise_for_status()
+                        data = resp.json()
+                        st.success(f"{data['source']} ({data['num_chunks']} chunks)")
                 except Exception as e:
                     st.error(f"Failed to ingest: {e}")
 

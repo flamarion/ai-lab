@@ -7,28 +7,31 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # File extensions we can load
-TEXT_EXTENSIONS = {".txt", ".md", ".rst", ".csv", ".log"}
+TEXT_EXTENSIONS = {".txt", ".md", ".rst", ".csv", ".log", ".tsv"}
 CODE_EXTENSIONS = {
     ".py", ".js", ".ts", ".go", ".rs", ".rb", ".java", ".kt",
     ".c", ".cpp", ".h", ".hpp", ".cs", ".sh", ".bash", ".zsh",
     ".yaml", ".yml", ".toml", ".json", ".xml", ".html", ".css",
-    ".sql", ".tf", ".hcl", ".Dockerfile",
+    ".sql", ".tf", ".hcl", ".Dockerfile", ".env", ".ini", ".cfg",
+    ".r", ".scala", ".lua", ".pl", ".php", ".swift",
 }
 PDF_EXTENSIONS = {".pdf"}
+OFFICE_EXTENSIONS = {".docx", ".xlsx"}
 
-SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS | CODE_EXTENSIONS | PDF_EXTENSIONS
+SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS | CODE_EXTENSIONS | PDF_EXTENSIONS | OFFICE_EXTENSIONS
 
 
 def load_file(path: str) -> str:
-    """Read a file and return its text content.
-
-    Supports plain text, code, markdown, and PDF files.
-    """
+    """Read a file and return its text content."""
     p = Path(path)
     suffix = p.suffix.lower()
 
     if suffix in PDF_EXTENSIONS:
         return _load_pdf(path)
+    if suffix == ".docx":
+        return _load_docx(p.read_bytes())
+    if suffix == ".xlsx":
+        return _load_xlsx(p.read_bytes())
     if suffix in TEXT_EXTENSIONS | CODE_EXTENSIONS or p.name == "Dockerfile":
         return p.read_text(encoding="utf-8", errors="replace")
 
@@ -41,7 +44,14 @@ def load_bytes(content: bytes, filename: str) -> str:
 
     if suffix in PDF_EXTENSIONS:
         return _load_pdf_bytes(content)
-    return content.decode("utf-8", errors="replace")
+    if suffix == ".docx":
+        return _load_docx(content)
+    if suffix == ".xlsx":
+        return _load_xlsx(content)
+    if suffix in TEXT_EXTENSIONS | CODE_EXTENSIONS:
+        return content.decode("utf-8", errors="replace")
+
+    raise ValueError(f"Unsupported file type: {suffix}")
 
 
 def _load_pdf(path: str) -> str:
@@ -61,6 +71,36 @@ def _load_pdf_bytes(content: bytes) -> str:
     reader = PdfReader(io.BytesIO(content))
     pages = [page.extract_text() or "" for page in reader.pages]
     return "\n\n".join(pages)
+
+
+def _load_docx(content: bytes) -> str:
+    """Extract text from a .docx file."""
+    import io
+    from docx import Document
+
+    doc = Document(io.BytesIO(content))
+    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+    return "\n\n".join(paragraphs)
+
+
+def _load_xlsx(content: bytes) -> str:
+    """Extract text from an .xlsx spreadsheet (all sheets)."""
+    import io
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    parts = []
+    for sheet in wb.sheetnames:
+        ws = wb[sheet]
+        rows = []
+        for row in ws.iter_rows(values_only=True):
+            cells = [str(c) if c is not None else "" for c in row]
+            if any(cells):
+                rows.append("\t".join(cells))
+        if rows:
+            parts.append(f"[Sheet: {sheet}]\n" + "\n".join(rows))
+    wb.close()
+    return "\n\n".join(parts)
 
 
 def chunk_text(
