@@ -144,6 +144,57 @@ async def delete_conversation(conversation_id: str) -> bool:
     return result == "DELETE 1"
 
 
+# --- Documents (RAG) ---
+
+
+async def add_document(source: str, num_chunks: int) -> str:
+    """Insert a document record and return its ID."""
+    pool = _pool_or_raise()
+    row = await pool.fetchrow(
+        """
+        INSERT INTO documents (source, num_chunks)
+        VALUES ($1, $2)
+        RETURNING id
+        """,
+        source,
+        num_chunks,
+    )
+    return str(row["id"])
+
+
+async def list_documents(limit: int = 50) -> list[dict]:
+    """Return ingested documents ordered by creation date."""
+    pool = _pool_or_raise()
+    rows = await pool.fetch(
+        """
+        SELECT id, source, num_chunks, created_at
+        FROM documents
+        ORDER BY created_at DESC
+        LIMIT $1
+        """,
+        limit,
+    )
+    return [
+        {
+            "id": str(r["id"]),
+            "source": r["source"],
+            "num_chunks": r["num_chunks"],
+            "created_at": r["created_at"].isoformat(),
+        }
+        for r in rows
+    ]
+
+
+async def delete_document(document_id: str) -> bool:
+    """Delete a document record. Returns True if it existed."""
+    pool = _pool_or_raise()
+    result = await pool.execute(
+        "DELETE FROM documents WHERE id = $1",
+        uuid.UUID(document_id),
+    )
+    return result == "DELETE 1"
+
+
 def is_available() -> bool:
     """Check if the database pool is initialized."""
     return _pool is not None

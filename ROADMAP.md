@@ -124,14 +124,14 @@ Chat UI ──▶ LLM Gateway ──▶ Ollama (GPU PC)
 
 ---
 
-### Phase 4 — RAG Pipeline
-**What you'll build:** Document ingestion → chunking → embedding → retrieval → augmented generation
+### Phase 4 — RAG Pipeline ✅
+**What you built:** Document ingestion (PDF, text, markdown, code), chunking, embedding, vector search, RAG-augmented chat
 
 ```
 Phase 4 data flow:
 
   your docs                    user question
-  (PDF, md, txt)               "what does X say about Y?"
+  (PDF, md, txt, code)         "what does X say about Y?"
        │                              │
        ▼                              ▼
 ┌─────────────┐              ┌──────────────┐
@@ -151,13 +151,25 @@ Embedding model: nomic-embed-text-v2-moe (958MB, MoE, 768 dims)
 Vector store:    Qdrant (Docker on ai-data VM)
 ```
 
-**What you'll learn:**
-- How LLMs get grounded in real data (not just training knowledge)
-- Chunking strategies and why they matter (size, overlap, boundaries)
-- Embedding models — how "meaning" becomes a vector of numbers
-- Similarity search — cosine distance finds semantically related content
-- Prompt engineering with retrieved context (the RAG prompt template)
-- The difference between "knows everything" and "can look things up"
+**What you learned:**
+- RAG grounds LLMs in real data — the model looks things up instead of guessing
+- Chunking strategies: split on paragraphs first, then sentences, with overlap for context continuity
+- Embedding models turn text into vectors — "meaning" becomes a number you can search
+- Cosine similarity finds semantically related content, not just keyword matches
+- The RAG prompt template is critical — it instructs the model to use context and admit when it doesn't know
+- Embedding prefixes matter: `search_document:` for chunks, `search_query:` for questions (model-specific optimization)
+- Qdrant payloads store the original text alongside vectors — you need both for retrieval
+- Graceful degradation extends to vector stores — chat works without Qdrant, RAG just becomes unavailable
+
+**Key files:**
+- `services/llm-gateway/src/vector_store.py` — Qdrant wrapper (init, upsert, search, delete)
+- `services/llm-gateway/src/chunker.py` — document loading (text, PDF, code) and chunking
+- `services/llm-gateway/src/ollama_client.py` — `embed()` method for Ollama /api/embed
+- `services/llm-gateway/src/main.py` — /ingest, /documents endpoints, RAG in /chat
+- `infra/docker/docker-compose.data.yml` — Qdrant service on ai-data VM
+- `infra/docker/init-db/002_rag_schema.sql` — documents table
+- `scripts/ingest.py` — CLI tool for bulk document ingestion
+- `apps/chat-ui/app.py` — RAG toggle in Advanced settings
 
 ---
 

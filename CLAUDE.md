@@ -10,7 +10,7 @@ Personal AI engineering lab for learning end-to-end AI system design. The goal i
 
 - **GPU PC** (192.168.1.178, hostname: mato): Ollama on port 11434 — serves mistral:7b, qwen3.5:latest, llama3:latest. RTX 3060 12GB + GTX 1650 4GB.
 - **ai-app VM** (Proxmox): Runs app services via Docker — gateway, chat UI, W&B Weave
-- **ai-data VM** (192.168.1.202, Proxmox): Data services — Postgres (conversation persistence)
+- **ai-data VM** (192.168.1.202, Proxmox): Data services — Postgres (conversation persistence), Qdrant (vector search for RAG)
 - **Ceph cluster**: 4TB — RBD block storage + S3 via RadosGW
 
 ### Network topology
@@ -22,7 +22,8 @@ ai-app VM (Proxmox)  ---- LAN ---->  GPU PC (192.168.1.178)
          LAN
          v
 ai-data VM (Proxmox)
-  └── postgres:5432
+  ├── postgres:5432
+  └── qdrant:6333
 ```
 
 ## Build & Run
@@ -102,29 +103,45 @@ Services are accessible from any LAN device at `http://<ai-app-vm-ip>:8501` (Cha
 
 ```
 User → Streamlit (chat-ui:8501) → FastAPI (llm-gateway:8000) → Ollama (GPU PC:11434)
-                                       ↓              ↓
-                                  W&B Weave      Postgres (ai-data VM:5432)
-                                  (tracing)      (conversations)
+                                       ↓              ↓              ↑
+                                  W&B Weave      Postgres        /api/embed
+                                  (tracing)      (ai-data)       (embeddings)
+                                                    ↓
+                                                 Qdrant
+                                                (ai-data:6333)
 ```
 
 ### Gateway API Endpoints
 
 - `GET /health` — health check (includes database status)
 - `GET /models` — list available Ollama models
-- `POST /chat` — chat completion (accepts model, message, temperature, top_p, num_predict, system_prompt, history, conversation_id)
+- `POST /chat` — chat completion (accepts model, message, temperature, top_p, num_predict, system_prompt, use_rag, history, conversation_id)
+- `POST /ingest` — upload a document for RAG (file upload, returns document_id + chunk count)
+- `GET /documents` — list ingested documents
+- `DELETE /documents/{id}` — delete a document and its vectors
 - `GET /conversations` — list recent conversations
 - `GET /conversations/{id}` — get conversation with messages
 - `DELETE /conversations/{id}` — delete a conversation
 
 ### Data Layer
 
-Postgres stores conversations and messages. The gateway connects via `asyncpg` with a connection pool. If Postgres is unreachable, the gateway degrades gracefully — chat still works but without persistence.
+Postgres stores conversations, messages, and document metadata. Qdrant stores document chunk vectors for RAG similarity search. The gateway connects to both via connection pools. If either is unreachable, the gateway degrades gracefully.
 
-Schema is initialized via `infra/docker/init-db/001_schema.sql` (mounted into `/docker-entrypoint-initdb.d/`).
+Schema is initialized via SQL files in `infra/docker/init-db/` (mounted into `/docker-entrypoint-initdb.d/`):
+- `001_schema.sql` — conversations + messages
+- `002_rag_schema.sql` — documents (metadata only; chunk text lives in Qdrant payloads)
 
 Two compose files, one per VM:
 - `infra/docker/docker-compose.yml` — ai-app VM (gateway + chat UI)
-- `infra/docker/docker-compose.data.yml` — ai-data VM (Postgres)
+- `infra/docker/docker-compose.data.yml` — ai-data VM (Postgres + Qdrant)
+
+### RAG Pipeline
+
+Documents are ingested via `POST /ingest` (API) or `scripts/ingest.py` (CLI). The pipeline: load file → chunk (paragraph/sentence splitting with overlap) → embed via Ollama (`nomic-embed-text-v2-moe`, 768 dims) → store vectors in Qdrant with text payload.
+
+When `use_rag=True` in a chat request, the gateway embeds the user's question, searches Qdrant for top-5 similar chunks, and injects them as context in a system prompt before calling the LLM.
+
+The embedding model uses prefixes for optimal performance: `search_document:` for ingested chunks, `search_query:` for user questions.
 
 ## Key Patterns
 
@@ -133,7 +150,7 @@ Two compose files, one per VM:
 - **Docker build contexts differ**: Gateway uses repo root as context (needs `shared/` and `services/`). Chat UI uses `apps/chat-ui/` as context (self-contained, no shared module access).
 - **Tracing**: Gateway uses `@weave.op()` decorator on `OllamaClient.chat()` for automatic W&B Weave tracing.
 - **Chat UI → Gateway**: Uses internal Docker network hostname `http://llm-gateway:8000`, passed via `GATEWAY_URL` env var in docker-compose.
-- **Graceful degradation**: Gateway starts even if Postgres or Weave are unavailable — logs a warning and serves stateless requests.
+- **Graceful degradation**: Gateway starts even if Postgres, Qdrant, or Weave are unavailable — logs a warning and serves what it can.
 - **Cross-VM communication**: Services discover each other via LAN IP:port in env vars (same pattern for Ollama and Postgres).
 - **Pass-through options**: The gateway validates and builds an Ollama options dict (temperature, top_p, num_predict); `OllamaClient.chat()` forwards it as-is. Adding a new Ollama option only requires a change to `ChatRequest` and the dict-building code — the client never changes.
 - **Smart model routing**: When "Auto" is selected (no explicit model in request), the gateway's `router.py` classifies the prompt via keyword matching and picks the best model. Code/technical prompts route to `ROUTE_CODE_MODEL` (qwen3.5), everything else to `ROUTE_DEFAULT_MODEL` (mistral). The selected model and reason are logged for observability. Users can always override by picking a specific model in the dropdown.
@@ -162,7 +179,9 @@ Environment="OLLAMA_NO_CLOUD=1"
 ## Tech Stack
 
 - Python 3.12, FastAPI, Streamlit, httpx
-- Ollama (local LLM inference)
-- Postgres 16, asyncpg (conversation persistence)
+- Ollama (local LLM inference + embeddings)
+- Postgres 16, asyncpg (conversation persistence + document metadata)
+- Qdrant (vector search for RAG)
 - W&B Weave (tracing/observability)
+- pypdf (PDF text extraction)
 - Docker Compose (deployment)
