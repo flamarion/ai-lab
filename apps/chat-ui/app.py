@@ -456,9 +456,11 @@ if st.session_state.page == "Chat":
                     success = False
             st.markdown(answer)
 
-        # Only add successful responses to history — errors would confuse the LLM
         if success:
             st.session_state.messages.append({"role": "assistant", "content": answer})
+        else:
+            # Roll back the user message so it doesn't pollute history on next turn
+            st.session_state.messages.pop()
 
 
 # ============================================================
@@ -546,8 +548,8 @@ elif st.session_state.page == "Settings":
                         resp.raise_for_status()
                         data = resp.json()
                         st.success(f"{data['source']} ({data['num_chunks']} chunks)")
-                except Exception as e:
-                    st.error(f"Failed to ingest: {e}")
+                    except Exception as e:
+                        st.error(f"Failed to ingest: {e}")
 
     st.divider()
     st.subheader("Account")

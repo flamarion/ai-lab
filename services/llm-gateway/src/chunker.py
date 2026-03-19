@@ -40,6 +40,7 @@ def load_file(path: str) -> str:
 
 def load_bytes(content: bytes, filename: str) -> str:
     """Load content from bytes (for file uploads)."""
+    name = Path(filename).name
     suffix = Path(filename).suffix.lower()
 
     if suffix in PDF_EXTENSIONS:
@@ -51,7 +52,15 @@ def load_bytes(content: bytes, filename: str) -> str:
     if suffix in TEXT_EXTENSIONS | CODE_EXTENSIONS:
         return content.decode("utf-8", errors="replace")
 
-    raise ValueError(f"Unsupported file type: {suffix}")
+    # Handle dotfiles (.env) and extensionless files (Dockerfile, Makefile)
+    if name in ("Dockerfile", "Makefile", ".env", ".gitignore", ".dockerignore"):
+        return content.decode("utf-8", errors="replace")
+
+    # Last resort: try UTF-8 decode for unknown text files
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError(f"Unsupported file type: {suffix or name}")
 
 
 def _load_pdf(path: str) -> str:

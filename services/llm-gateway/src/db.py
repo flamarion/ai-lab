@@ -256,7 +256,7 @@ async def get_user_by_id(user_id: str) -> dict | None:
     """Return user by ID or None (includes pin_hash for verification)."""
     pool = _pool_or_raise()
     row = await pool.fetchrow(
-        "SELECT id, username, pin_hash, is_admin, preferences, created_at FROM users WHERE id = $1",
+        "SELECT id, username, pin_hash, is_admin, preferences FROM users WHERE id = $1",
         uuid.UUID(user_id),
     )
     if row is None:
