@@ -173,6 +173,26 @@ Vector store:    Qdrant (Docker on ai-data VM)
 
 ---
 
+### Phase 4.5 — UX Polish: Auth, Admin, File Upload ✅
+**What you built:** PIN-based user authentication, per-user conversations, admin panel, file upload in chat, settings persistence, simplified UI for family use
+**What you learned:**
+- Multi-user architecture: adding a `user_id` FK to conversations, filtering queries, nullable for backward compatibility
+- PIN auth with bcrypt: hash on register, verify on login, run in threadpool to avoid blocking async event loop
+- Admin role pattern: first registered user is auto-admin, admin endpoints validate caller before acting
+- Database migrations handle schema evolution — adding columns, changing FK constraints across deploys
+- UI progressive disclosure: family members see Model + Temperature, power users open Advanced for RAG, system prompt, file upload
+- Settings persistence via JSONB column — preferences follow the user across devices
+- Copilot review triage: fix real bugs (FK violations, XSS, event loop blocking), deprioritize auth hardening for LAN apps
+
+**Key files:**
+- `infra/migrations/003_users.sql` — users table + conversations.user_id
+- `infra/migrations/004_user_admin.sql` — is_admin column
+- `infra/migrations/005_user_delete_cascade.sql` — ON DELETE SET NULL fix
+- `services/llm-gateway/src/main.py` — auth, admin, change-pin endpoints
+- `apps/chat-ui/app.py` — login screen, admin panel, PIN change, file upload
+
+---
+
 ### Phase 5 — Evaluation
 **What you'll build:** Test cases, scoring, model comparison (mistral vs llama3)
 **What you'll learn:**
