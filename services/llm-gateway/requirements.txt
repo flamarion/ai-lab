@@ -5,6 +5,6 @@ weave>=0.52.30
 wandb==0.23.1
 pydantic==2.10.4
 asyncpg==0.30.0
-qdrant-client>=2.0.0
+qdrant-client>=1.17.0
 python-multipart>=0.0.5
 pypdf>=5.0.0
