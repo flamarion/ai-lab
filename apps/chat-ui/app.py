@@ -107,6 +107,8 @@ def _save_preferences():
             json={"user_id": st.session_state.user_id, "preferences": prefs},
             timeout=5.0,
         )
+        # Keep local state in sync so Chat page reads updated values
+        st.session_state.preferences = prefs
     except Exception:
         pass
 
@@ -554,7 +556,7 @@ elif st.session_state.page == "Admin" and st.session_state.is_admin:
                 child_label = "🧒" if u.get("is_child") else "👤"
                 if st.button(child_label, key=f"child_{u['id']}", help="Toggle child flag"):
                     try:
-                        httpx.post(
+                        resp = httpx.post(
                             f"{GATEWAY_URL}/admin/toggle-child",
                             json={
                                 "admin_user_id": st.session_state.user_id,
@@ -563,15 +565,16 @@ elif st.session_state.page == "Admin" and st.session_state.is_admin:
                             },
                             timeout=10.0,
                         )
+                        resp.raise_for_status()
                         st.rerun()
-                    except Exception:
-                        st.error("Failed")
+                    except Exception as e:
+                        st.error(f"Failed: {e}")
         with col_admin:
             if u["id"] != st.session_state.user_id:
                 admin_label = "⭐" if u.get("is_admin") else "☆"
                 if st.button(admin_label, key=f"adm_{u['id']}", help="Toggle admin"):
                     try:
-                        httpx.post(
+                        resp = httpx.post(
                             f"{GATEWAY_URL}/admin/toggle-admin",
                             json={
                                 "admin_user_id": st.session_state.user_id,
@@ -580,14 +583,15 @@ elif st.session_state.page == "Admin" and st.session_state.is_admin:
                             },
                             timeout=10.0,
                         )
+                        resp.raise_for_status()
                         st.rerun()
-                    except Exception:
-                        st.error("Failed")
+                    except Exception as e:
+                        st.error(f"Failed: {e}")
         with col_del:
             if u["id"] != st.session_state.user_id:
                 if st.button("🗑", key=f"delusr_{u['id']}", type="tertiary"):
                     try:
-                        httpx.post(
+                        resp = httpx.post(
                             f"{GATEWAY_URL}/admin/delete-user",
                             json={
                                 "admin_user_id": st.session_state.user_id,
@@ -595,6 +599,7 @@ elif st.session_state.page == "Admin" and st.session_state.is_admin:
                             },
                             timeout=10.0,
                         )
+                        resp.raise_for_status()
                         st.rerun()
                     except Exception:
                         st.error("Failed")

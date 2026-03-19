@@ -355,6 +355,9 @@ async def admin_toggle_child(request: AdminToggleChildRequest):
     await _require_admin(request.admin_user_id)
     _validate_uuid(request.target_user_id)
 
+    if request.admin_user_id == request.target_user_id:
+        raise HTTPException(status_code=400, detail="Cannot change your own child flag")
+
     updated = await db.update_user_child(request.target_user_id, request.is_child)
     if not updated:
         raise HTTPException(status_code=404, detail="User not found")
