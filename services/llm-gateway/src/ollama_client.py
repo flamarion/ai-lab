@@ -1,7 +1,16 @@
 import httpx
-import weave
 
 from ai_lab_common.config import settings
+
+# Conditional weave import — no-op decorator when disabled
+if settings.WEAVE_ENABLED:
+    try:
+        import weave
+        _trace = weave.op()
+    except Exception:
+        _trace = lambda fn: fn  # noqa: E731
+else:
+    _trace = lambda fn: fn  # noqa: E731
 
 
 class OllamaClient:
@@ -9,7 +18,7 @@ class OllamaClient:
         self.base_url = base_url.rstrip("/")
         self.http = httpx.AsyncClient(base_url=self.base_url, timeout=120.0)
 
-    @weave.op()
+    @_trace
     async def chat(self, model: str, messages: list[dict], options: dict | None = None) -> str:
         """Send a chat completion request to Ollama and return the response text."""
         response = await self.http.post(
@@ -52,7 +61,7 @@ class OllamaClient:
         title = response.json()["message"]["content"].strip().strip("\"'")
         return title[:80]
 
-    @weave.op()
+    @_trace
     async def embed(self, texts: list[str], model: str | None = None) -> list[list[float]]:
         """Embed one or more texts via Ollama /api/embed."""
         response = await self.http.post(

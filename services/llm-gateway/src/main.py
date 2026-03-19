@@ -47,24 +47,27 @@ def _validate_uuid(value: str) -> uuid.UUID:
 async def lifespan(app: FastAPI):
     global client
     # --- Weave init ---
-    try:
-        import weave
-
-        _original_checkLevel = logging._checkLevel
-
-        def _patched_checkLevel(level):
-            if callable(level) and hasattr(level, "__name__"):
-                level = level.__name__.upper()
-            return _original_checkLevel(level)
-
-        logging._checkLevel = _patched_checkLevel
+    if settings.WEAVE_ENABLED:
         try:
-            weave.init(settings.WANDB_PROJECT)
-        finally:
-            logging._checkLevel = _original_checkLevel
-        logger.info("Weave initialized — project: %s", settings.WANDB_PROJECT)
-    except Exception as e:
-        logger.warning("Failed to initialize Weave: %s — tracing disabled.", e)
+            import weave
+
+            _original_checkLevel = logging._checkLevel
+
+            def _patched_checkLevel(level):
+                if callable(level) and hasattr(level, "__name__"):
+                    level = level.__name__.upper()
+                return _original_checkLevel(level)
+
+            logging._checkLevel = _patched_checkLevel
+            try:
+                weave.init(settings.WANDB_PROJECT)
+            finally:
+                logging._checkLevel = _original_checkLevel
+            logger.info("Weave initialized — project: %s", settings.WANDB_PROJECT)
+        except Exception as e:
+            logger.warning("Failed to initialize Weave: %s — tracing disabled.", e)
+    else:
+        logger.info("Weave disabled (WEAVE_ENABLED=%s)", os.getenv("WEAVE_ENABLED", "true"))
 
     # --- Database pool init ---
     try:
