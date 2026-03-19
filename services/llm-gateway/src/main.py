@@ -157,6 +157,19 @@ class AdminDeleteUserRequest(BaseModel):
     target_user_id: str
 
 
+class AdminToggleChildRequest(BaseModel):
+    admin_user_id: str
+    target_user_id: str
+    is_child: bool
+
+
+class AdminCreateUserRequest(BaseModel):
+    admin_user_id: str
+    username: str
+    pin: str
+    is_child: bool = False
+
+
 # --- Auth Endpoints ---
 
 
@@ -332,6 +345,50 @@ async def admin_delete_user(request: AdminDeleteUserRequest):
     if not deleted:
         raise HTTPException(status_code=404, detail="User not found")
     return {"status": "deleted"}
+
+
+@app.post("/admin/toggle-child")
+async def admin_toggle_child(request: AdminToggleChildRequest):
+    """Admin flags/unflags a user as a child."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(request.admin_user_id)
+    _validate_uuid(request.target_user_id)
+
+    if request.admin_user_id == request.target_user_id:
+        raise HTTPException(status_code=400, detail="Cannot change your own child flag")
+
+    updated = await db.update_user_child(request.target_user_id, request.is_child)
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"status": "updated", "is_child": request.is_child}
+
+
+@app.post("/admin/create-user")
+async def admin_create_user(request: AdminCreateUserRequest):
+    """Admin creates a user account (e.g., for a family member)."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(request.admin_user_id)
+
+    if not _PIN_PATTERN.match(request.pin):
+        raise HTTPException(status_code=400, detail="PIN must be 4-8 digits")
+    if not request.username.strip():
+        raise HTTPException(status_code=400, detail="Username is required")
+
+    existing = await db.get_user_by_username(request.username.strip())
+    if existing:
+        raise HTTPException(status_code=409, detail="Username already taken")
+
+    pin_hash = await run_in_threadpool(
+        bcrypt.hashpw, request.pin.encode(), bcrypt.gensalt()
+    )
+    user_id = await db.create_user(request.username.strip(), pin_hash.decode())
+
+    if request.is_child:
+        await db.update_user_child(user_id, True)
+
+    return {"user_id": user_id, "username": request.username.strip()}
 
 
 # --- Core Endpoints ---
