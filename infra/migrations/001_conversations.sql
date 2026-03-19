@@ -1,5 +1,8 @@
 -- Phase 3: Conversation persistence schema
 
+-- Required for gen_random_uuid() used across all tables
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 CREATE TABLE IF NOT EXISTS conversations (
     id          UUID PRIMARY KEY,
     title       TEXT NOT NULL DEFAULT '',

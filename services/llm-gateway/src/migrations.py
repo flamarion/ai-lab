@@ -15,13 +15,18 @@ import asyncpg
 
 logger = logging.getLogger(__name__)
 
-# Migrations directory relative to repo root.
-# In Docker: /app/infra/migrations
-# In local dev: resolved relative to this file
-_MIGRATIONS_DIR = os.getenv(
-    "MIGRATIONS_DIR",
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "infra", "migrations"),
-)
+# Migrations directory.
+# In Docker: /app/infra/migrations (Dockerfile copies it there)
+# In local dev: resolved relative to this file (src/ -> repo root -> infra/migrations)
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_DEFAULT_DIR = os.path.join(_THIS_DIR, "..", "infra", "migrations")  # /app/src/../infra/migrations = /app/infra/migrations
+if not os.path.isdir(_DEFAULT_DIR):
+    # Fallback for local dev (src is deeper in the tree)
+    _DEFAULT_DIR = os.path.join(_THIS_DIR, "..", "..", "..", "infra", "migrations")
+_MIGRATIONS_DIR = os.getenv("MIGRATIONS_DIR", _DEFAULT_DIR)
+
+# Advisory lock ID for preventing concurrent migration runs
+_MIGRATION_LOCK_ID = 839274
 
 
 async def run_migrations(pool: asyncpg.Pool) -> int:
@@ -31,6 +36,25 @@ async def run_migrations(pool: asyncpg.Pool) -> int:
         logger.warning("Migrations directory not found: %s", migrations_dir)
         return 0
 
+    # Use an advisory lock to prevent concurrent migration runs
+    # (e.g., two gateway instances starting at the same time)
+    async with pool.acquire() as lock_conn:
+        await lock_conn.execute("SELECT pg_advisory_lock($1)", _MIGRATION_LOCK_ID)
+        try:
+            applied_count = await _apply_pending(pool, sql_files)
+        finally:
+            await lock_conn.execute("SELECT pg_advisory_unlock($1)", _MIGRATION_LOCK_ID)
+
+    if applied_count == 0:
+        logger.info("Database is up to date (no pending migrations)")
+    else:
+        logger.info("Applied %d migration(s)", applied_count)
+
+    return applied_count
+
+
+async def _apply_pending(pool: asyncpg.Pool, sql_files: list[Path]) -> int:
+    """Apply pending migrations inside the advisory lock."""
     # Ensure the tracking table exists
     await pool.execute("""
         CREATE TABLE IF NOT EXISTS _migrations (
@@ -43,12 +67,6 @@ async def run_migrations(pool: asyncpg.Pool) -> int:
     # Get already-applied migrations
     rows = await pool.fetch("SELECT filename FROM _migrations ORDER BY filename")
     applied = {r["filename"] for r in rows}
-
-    # Discover migration files (sorted by name = sorted by number)
-    sql_files = sorted(
-        f for f in migrations_dir.iterdir()
-        if f.suffix == ".sql" and f.name[0].isdigit()
-    )
 
     applied_count = 0
     for sql_file in sql_files:
@@ -68,10 +86,5 @@ async def run_migrations(pool: asyncpg.Pool) -> int:
 
         applied_count += 1
         logger.info("Migration applied: %s", sql_file.name)
-
-    if applied_count == 0:
-        logger.info("Database is up to date (no pending migrations)")
-    else:
-        logger.info("Applied %d migration(s)", applied_count)
 
     return applied_count

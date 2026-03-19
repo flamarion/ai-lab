@@ -53,13 +53,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Failed to initialize Weave: %s — tracing disabled.", e)
 
-    # --- Database pool init + migrations ---
+    # --- Database pool init ---
     try:
         await db.init_pool(settings.DATABASE_URL)
         logger.info("Database connected")
-        await migrations.run_migrations(db._pool)
     except Exception as e:
         logger.warning("Failed to connect to database: %s — persistence disabled.", e)
+
+    # --- Run migrations ---
+    if db.is_available():
+        try:
+            await migrations.run_migrations(db.get_pool())
+        except Exception as e:
+            logger.warning("Migration failed: %s — schema may be incomplete.", e)
 
     # --- Qdrant init ---
     try:
