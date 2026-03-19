@@ -369,6 +369,30 @@ if st.session_state.page == "Chat":
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
 
+    # File upload — attach a document to ground the conversation
+    uploaded_file = st.file_uploader(
+        "Attach a document",
+        type=["txt", "md", "pdf", "py", "js", "go", "sh", "yaml", "json", "sql"],
+        key="chat_file_upload",
+        label_visibility="collapsed",
+    )
+    if uploaded_file is not None and not st.session_state.get("_last_ingested") == uploaded_file.name:
+        with st.spinner(f"Processing {uploaded_file.name}..."):
+            try:
+                resp = httpx.post(
+                    f"{GATEWAY_URL}/ingest",
+                    files={"file": (uploaded_file.name, uploaded_file.getvalue())},
+                    timeout=120.0,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                st.session_state["_last_ingested"] = uploaded_file.name
+                st.session_state["adv_use_rag"] = True
+                use_rag = True
+                st.success(f"Uploaded {data['source']} ({data['num_chunks']} chunks) — RAG enabled")
+            except Exception as e:
+                st.error(f"Failed to process file: {e}")
+
     # Chat input
     if prompt := st.chat_input("Type your message..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
