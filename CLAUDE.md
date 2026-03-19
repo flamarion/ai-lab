@@ -127,9 +127,11 @@ User → Streamlit (chat-ui:8501) → FastAPI (llm-gateway:8000) → Ollama (GPU
 
 Postgres stores conversations, messages, and document metadata. Qdrant stores document chunk vectors for RAG similarity search. The gateway connects to both via connection pools. If either is unreachable, the gateway degrades gracefully.
 
-Schema is initialized via SQL files in `infra/docker/init-db/` (mounted into `/docker-entrypoint-initdb.d/`):
-- `001_schema.sql` — conversations + messages
-- `002_rag_schema.sql` — documents (metadata only; chunk text lives in Qdrant payloads)
+Schema is managed via numbered SQL migrations in `infra/migrations/`. The gateway runs pending migrations automatically on startup (tracked in a `_migrations` table). To add a new migration, create `infra/migrations/003_description.sql` — it will be applied on the next deploy. Use `IF NOT EXISTS` / `IF EXISTS` for idempotency.
+
+Current migrations:
+- `001_conversations.sql` — conversations + messages tables
+- `002_documents.sql` — documents table (RAG metadata; chunk text lives in Qdrant payloads)
 
 Two compose files, one per VM:
 - `infra/docker/docker-compose.yml` — ai-app VM (gateway + chat UI)
@@ -151,6 +153,7 @@ The embedding model uses prefixes for optimal performance: `search_document:` fo
 - **Tracing**: Gateway uses `@weave.op()` decorator on `OllamaClient.chat()` for automatic W&B Weave tracing.
 - **Chat UI → Gateway**: Uses internal Docker network hostname `http://llm-gateway:8000`, passed via `GATEWAY_URL` env var in docker-compose.
 - **Graceful degradation**: Gateway starts even if Postgres, Qdrant, or Weave are unavailable — logs a warning and serves what it can.
+- **Database migrations**: Numbered SQL files in `infra/migrations/` are applied automatically on gateway startup. A `_migrations` table tracks what's been applied. No manual SQL execution needed on deploy.
 - **Cross-VM communication**: Services discover each other via LAN IP:port in env vars (same pattern for Ollama and Postgres).
 - **Pass-through options**: The gateway validates and builds an Ollama options dict (temperature, top_p, num_predict); `OllamaClient.chat()` forwards it as-is. Adding a new Ollama option only requires a change to `ChatRequest` and the dict-building code — the client never changes.
 - **Smart model routing**: When "Auto" is selected (no explicit model in request), the gateway's `router.py` classifies the prompt via keyword matching and picks the best model. Code/technical prompts route to `ROUTE_CODE_MODEL` (qwen3.5), everything else to `ROUTE_DEFAULT_MODEL` (mistral). The selected model and reason are logged for observability. Users can always override by picking a specific model in the dropdown.

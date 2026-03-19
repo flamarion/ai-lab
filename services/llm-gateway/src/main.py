@@ -14,7 +14,7 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
     sys.path.insert(0, _shared_path)
 
 from ai_lab_common.config import settings
-from src import chunker, db, router, vector_store
+from src import chunker, db, migrations, router, vector_store
 from src.ollama_client import OllamaClient
 
 logger = logging.getLogger(__name__)
@@ -53,10 +53,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Failed to initialize Weave: %s — tracing disabled.", e)
 
-    # --- Database pool init ---
+    # --- Database pool init + migrations ---
     try:
         await db.init_pool(settings.DATABASE_URL)
         logger.info("Database connected")
+        await migrations.run_migrations(db._pool)
     except Exception as e:
         logger.warning("Failed to connect to database: %s — persistence disabled.", e)
 
