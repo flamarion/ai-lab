@@ -1,0 +1,54 @@
+{
+  "category": "general",
+  "description": "General knowledge and reasoning — tests baseline model quality",
+  "cases": [
+    {
+      "id": "gen-001",
+      "question": "What causes tides on Earth?",
+      "criteria": "Should mention the Moon's gravitational pull. Bonus for mentioning the Sun's contribution and spring/neap tides.",
+      "expected_keywords": ["moon", "gravity", "gravitational"]
+    },
+    {
+      "id": "gen-002",
+      "question": "Explain the difference between TCP and UDP in simple terms.",
+      "criteria": "Should explain TCP as reliable/ordered and UDP as fast/no-guarantee. Should give a practical example or analogy.",
+      "expected_keywords": ["reliable", "fast"]
+    },
+    {
+      "id": "gen-003",
+      "question": "Why is the sky blue?",
+      "criteria": "Should mention Rayleigh scattering and that shorter (blue) wavelengths scatter more. Should not be overly technical for a general audience.",
+      "expected_keywords": ["scatter", "wavelength"]
+    },
+    {
+      "id": "gen-004",
+      "question": "A farmer has 15 sheep. All but 8 die. How many sheep are left?",
+      "criteria": "The correct answer is 8. This is a trick question — 'all but 8' means 8 survive. The model should not say 7 or 15.",
+      "expected_keywords": ["8"]
+    },
+    {
+      "id": "gen-005",
+      "question": "Summarize the key ideas behind containerization (like Docker) in 3-4 sentences.",
+      "criteria": "Should mention isolation, reproducibility, and portability. Should distinguish containers from VMs (lighter, share kernel). Should be concise.",
+      "expected_keywords": ["isolation", "image"]
+    },
+    {
+      "id": "gen-006",
+      "question": "What is the capital of Australia?",
+      "criteria": "Must say Canberra. Many people incorrectly say Sydney — the model should not fall for this.",
+      "expected_keywords": ["canberra"]
+    },
+    {
+      "id": "gen-007",
+      "question": "Explain what a hash function is and give one real-world use case.",
+      "criteria": "Should explain that a hash function maps input to a fixed-size output, is one-way, and deterministic. Use case could be password storage, data integrity, hash tables, etc.",
+      "expected_keywords": ["hash", "input", "output"]
+    },
+    {
+      "id": "gen-008",
+      "question": "If I have 3 shirts and 4 pants, how many different outfits can I make?",
+      "criteria": "Should answer 12 (3 x 4). Should briefly explain the multiplication principle.",
+      "expected_keywords": ["12"]
+    }
+  ]
+}

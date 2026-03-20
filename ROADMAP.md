@@ -193,13 +193,41 @@ Vector store:    Qdrant (Docker on ai-data VM)
 
 ---
 
-### Phase 5 — Evaluation
-**What you'll build:** Test cases, scoring, model comparison (mistral vs llama3)
-**What you'll learn:**
-- How to measure if your AI system is actually good
-- Automated evaluation vs human evaluation
-- Building test datasets
-- Regression testing for AI (did your change make things worse?)
+### Phase 5 — Evaluation ✅
+**What you built:** Eval datasets, LLM-as-judge scoring, keyword checks, model comparison runner
+
+```
+Phase 5 eval flow:
+
+  datasets/eval/*.json          scripts/eval.py
+  (test cases with criteria)    (eval runner)
+       │                              │
+       ▼                              ▼
+  ┌──────────────────────────────────────────┐
+  │  For each model × each test case:        │
+  │  1. POST /chat → get response            │
+  │  2. Keyword score (expected terms found?) │
+  │  3. LLM-as-judge (model rates 1-5)       │
+  │  4. Record latency                        │
+  └──────────────────────────────────────────┘
+       │
+       ▼
+  Comparison table (avg scores by model, by category, notable differences)
+```
+
+**What you learned:**
+- LLM-as-judge: using one model to grade another's output — the standard production eval approach. Scales better than human review and catches nuance that keyword matching misses
+- Test dataset design: each case has a question, criteria for grading, and optional expected keywords. Criteria describe *what good looks like*, not just right/wrong
+- Keyword scoring is a sanity check, not a replacement for judge scoring — a response can use synonyms and still be correct
+- Eval should test the whole system (gateway → routing → model), not just raw model output — that's why the runner hits `/chat`
+- Self-judging (each model judges itself) is fair for comparison; cross-model judging (one model judges all) is better for consistency
+- Low temperature during eval (0.3) and judging (0.1) reduces randomness so results are more reproducible
+
+**Key files:**
+- `datasets/eval/general.json` — general knowledge and reasoning (8 cases)
+- `datasets/eval/code.json` — code generation and technical reasoning (8 cases)
+- `datasets/eval/rag.json` — RAG-dependent questions (3 cases, skipped if no docs)
+- `scripts/eval.py` — eval runner (dataset loading, scoring, model comparison, reporting)
 
 ---
 
