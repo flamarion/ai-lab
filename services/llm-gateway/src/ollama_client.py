@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from functools import partial
 
 import httpx
 
@@ -85,11 +87,16 @@ class OllamaClient:
             # Add the assistant's tool_calls message to history (verbatim)
             messages.append(msg)
 
+            loop = asyncio.get_event_loop()
             for tc in tool_calls:
                 fn_name = tc["function"]["name"]
                 fn_args = tc["function"]["arguments"]
 
-                result = tools.execute_tool(fn_name, fn_args)
+                # Run tools in threadpool so sync I/O (e.g. web_search)
+                # doesn't block the async event loop
+                result = await loop.run_in_executor(
+                    None, partial(tools.execute_tool, fn_name, fn_args)
+                )
                 tools_used.append({
                     "name": fn_name,
                     "arguments": fn_args,

@@ -99,6 +99,7 @@ The schema follows Ollama's format (same as OpenAI function calling):
 Supported parameter types: string, integer, number, boolean, array, object.
 """
 
+import ast
 import logging
 import math
 from datetime import datetime, timezone
@@ -111,12 +112,48 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+_MAX_EXPRESSION_LEN = 200
+_MAX_EXPONENT = 1000
+
+# AST node types allowed in calculator expressions — only arithmetic.
+_SAFE_AST_NODES = (
+    ast.Expression, ast.Module,
+    ast.BinOp, ast.UnaryOp, ast.Call, ast.Name, ast.Constant, ast.Load,
+    # Operators
+    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow,
+    ast.USub, ast.UAdd,
+)
+
+
+def _validate_ast(node: ast.AST) -> str | None:
+    """Walk the AST and reject anything that isn't simple arithmetic.
+
+    Returns an error message if something unsafe is found, None if OK.
+    Blocks list/dict/set literals, comprehensions, subscripts, starred
+    expressions, and anything else that could cause resource exhaustion.
+    """
+    for child in ast.walk(node):
+        if not isinstance(child, _SAFE_AST_NODES):
+            return f"'{type(child).__name__}' is not allowed in calculator expressions"
+        # Cap exponent size to prevent 10**10000000
+        if isinstance(child, ast.BinOp) and isinstance(child.op, ast.Pow):
+            if isinstance(child.right, ast.Constant) and isinstance(child.right.value, (int, float)):
+                if abs(child.right.value) > _MAX_EXPONENT:
+                    return f"Exponent too large (max {_MAX_EXPONENT})"
+    return None
+
+
 def calculator(expression: str) -> str:
     """Evaluate a math expression safely.
 
     Supports basic arithmetic, powers, sqrt, abs, round, and common math
     constants (pi, e). No imports, no exec, no eval of arbitrary code.
+    Validates the AST to block resource exhaustion (large exponents,
+    list/dict literals, comprehensions).
     """
+    if len(expression) > _MAX_EXPRESSION_LEN:
+        return f"Error: expression too long (max {_MAX_EXPRESSION_LEN} chars)"
+
     allowed_names = {
         "abs": abs,
         "round": round,
@@ -133,8 +170,13 @@ def calculator(expression: str) -> str:
         "tan": math.tan,
     }
     try:
-        # Compile to AST first — rejects anything that isn't an expression
-        code = compile(expression, "<calculator>", "eval")
+        # Parse to AST and validate structure before eval
+        tree = ast.parse(expression, mode="eval")
+        error = _validate_ast(tree)
+        if error:
+            return f"Error: {error}"
+
+        code = compile(tree, "<calculator>", "eval")
         # Check that only allowed names are referenced
         for name in code.co_names:
             if name not in allowed_names:
