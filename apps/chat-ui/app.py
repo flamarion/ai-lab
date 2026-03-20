@@ -613,11 +613,29 @@ elif st.session_state.page == "Settings":
         # Add new server
         with st.expander("Add MCP server"):
             mcp_name = st.text_input("Server name", placeholder="e.g. github", key="mcp_add_name")
-            mcp_command = st.text_input("Command", placeholder="e.g. python", key="mcp_add_cmd")
-            mcp_args = st.text_input("Arguments (space-separated)", placeholder="e.g. -m mcp_server_fetch", key="mcp_add_args")
+            mcp_command = st.text_input("Command", placeholder="e.g. docker", key="mcp_add_cmd")
+            mcp_args = st.text_input(
+                "Arguments (space-separated)",
+                placeholder="e.g. run -i --rm ghcr.io/github/github-mcp-server",
+                key="mcp_add_args",
+            )
+            mcp_env = st.text_area(
+                "Environment variables (one per line: KEY=VALUE)",
+                placeholder="GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...\nANOTHER_VAR=value",
+                height=80,
+                key="mcp_add_env",
+            )
             if st.button("Add server", use_container_width=True):
                 if mcp_name.strip() and mcp_command.strip():
                     args_list = mcp_args.split() if mcp_args.strip() else []
+                    # Parse KEY=VALUE lines into a dict
+                    env_dict = {}
+                    for line in (mcp_env or "").strip().splitlines():
+                        line = line.strip()
+                        if "=" in line:
+                            k, v = line.split("=", 1)
+                            if k.strip():
+                                env_dict[k.strip()] = v.strip()
                     try:
                         resp = httpx.post(
                             f"{GATEWAY_URL}/mcp/servers",
@@ -626,6 +644,7 @@ elif st.session_state.page == "Settings":
                                 "name": mcp_name.strip(),
                                 "command": mcp_command.strip(),
                                 "args": args_list,
+                                "env": env_dict,
                             },
                             timeout=30.0,
                         )
