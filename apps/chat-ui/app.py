@@ -403,12 +403,13 @@ if st.session_state.page == "Chat":
         selected_model = None
     temperature = default_temp
 
-    # Advanced settings stored in session (set on Settings page)
-    top_p = st.session_state.get("adv_top_p", 0.9)
-    num_predict = st.session_state.get("adv_num_predict", 1024)
-    system_prompt = st.session_state.get("adv_system_prompt", "")
-    use_rag = st.session_state.get("adv_use_rag", False)
-    use_tools = st.session_state.get("adv_use_tools", False)
+    # Advanced settings — read from persisted preferences (not widget keys,
+    # which Streamlit clears when the Settings page isn't rendered)
+    top_p = prefs.get("top_p", 0.9)
+    num_predict = prefs.get("num_predict", 1024)
+    system_prompt = prefs.get("system_prompt", "")
+    use_rag = prefs.get("use_rag", False)
+    use_tools = prefs.get("use_tools", False)
 
     # Welcome screen
     if not st.session_state.messages:
@@ -432,38 +433,6 @@ if st.session_state.page == "Chat":
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
-
-    # File upload — attach documents to ground the conversation
-    uploaded_files = st.file_uploader(
-        "Attach documents",
-        type=_ALL_TYPES,
-        accept_multiple_files=True,
-        key="chat_file_upload",
-        label_visibility="collapsed",
-    )
-    if uploaded_files:
-        ingested = st.session_state.get("_ingested_files", set())
-        for uf in uploaded_files:
-            if uf.name in ingested:
-                continue
-            with st.spinner(f"Processing {uf.name}..."):
-                try:
-                    resp = httpx.post(
-                        f"{GATEWAY_URL}/ingest",
-                        files={"file": (uf.name, uf.getvalue())},
-                        timeout=120.0,
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    ingested.add(uf.name)
-                    st.session_state["_ingested_files"] = ingested
-                    st.session_state["adv_use_rag"] = True
-                    use_rag = True
-                    st.success(f"{data['source']} ({data['num_chunks']} chunks)")
-                except Exception as e:
-                    st.error(f"Failed to process {uf.name}: {e}")
-        if ingested:
-            st.caption("RAG enabled — ask questions about your documents")
 
     # Chat input
     if prompt := st.chat_input("Type your message..."):
@@ -565,21 +534,21 @@ elif st.session_state.page == "Settings":
 
     st.slider(
         "Max response length", 64, 4096,
-        st.session_state.get("adv_num_predict", 1024), 64,
+        prefs.get("num_predict", 1024), 64,
         key="adv_num_predict",
         on_change=_save_preferences,
         help="Limit how long the response can be (in tokens, ~0.75 words each)",
     )
     st.slider(
         "Top P", 0.0, 1.0,
-        st.session_state.get("adv_top_p", 0.9), 0.05,
+        prefs.get("top_p", 0.9), 0.05,
         key="adv_top_p",
         on_change=_save_preferences,
         help="Controls diversity. Lower = more focused, higher = more creative",
     )
     st.text_area(
         "System prompt",
-        value=st.session_state.get("adv_system_prompt", ""),
+        value=prefs.get("system_prompt", ""),
         height=80,
         key="adv_system_prompt",
         on_change=_save_preferences,
@@ -588,14 +557,14 @@ elif st.session_state.page == "Settings":
     )
     st.toggle(
         "Use documents (RAG)",
-        value=st.session_state.get("adv_use_rag", False),
+        value=prefs.get("use_rag", False),
         key="adv_use_rag",
         on_change=_save_preferences,
         help="Ground answers in your uploaded documents",
     )
     st.toggle(
         "Use tools",
-        value=st.session_state.get("adv_use_tools", False),
+        value=prefs.get("use_tools", False),
         key="adv_use_tools",
         on_change=_save_preferences,
         help="Let the model use tools (calculator, web search, current time). Requires a tool-capable model (llama3.1, qwen3.5).",
