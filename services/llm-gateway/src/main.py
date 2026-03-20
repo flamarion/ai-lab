@@ -236,6 +236,27 @@ async def login(request: LoginRequest):
     }
 
 
+@app.get("/auth/session")
+async def get_session(user_id: str = Query(...)):
+    """Restore a session from a user_id (e.g. after browser reload).
+
+    Returns the same data as /auth/login but without requiring PIN.
+    This is safe for a LAN-only app — no public internet exposure.
+    """
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    _validate_uuid(user_id)
+    user = await db.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "user_id": user["id"],
+        "username": user["username"],
+        "is_admin": user["is_admin"],
+        "preferences": user["preferences"],
+    }
+
+
 @app.patch("/auth/preferences")
 async def update_preferences(request: PreferencesRequest):
     if not db.is_available():
