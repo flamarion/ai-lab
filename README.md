@@ -117,6 +117,20 @@ Output includes a comparison table with averages by model, by category, and flag
 
 Test cases live in `datasets/eval/*.json` — add your own by following the same format (question, criteria, expected keywords).
 
+### Weave Evaluation (tracked)
+
+For tracked evaluations with the W&B Weave dashboard — versioned datasets, model configs, scorer results, and run-over-run comparison:
+
+```bash
+# Requires WANDB_API_KEY set in your environment
+python scripts/eval_weave.py
+
+# Specific model with a consistent judge
+python scripts/eval_weave.py --models mistral:7b --judge-model mistral:7b
+```
+
+Results appear in the Weave dashboard where you can compare runs, inspect per-prediction scores, and track quality over time.
+
 ## Repository Layout
 
 ```
@@ -171,7 +185,8 @@ ai-lab/
     ├── deploy-data.sh                 # Deploy Postgres + Qdrant
     ├── aictl.sh                       # Unified service control
     ├── ingest.py                      # CLI tool for document ingestion
-    └── eval.py                        # Eval runner (LLM-as-judge + model comparison)
+    ├── eval.py                        # Eval runner (terminal output + optional JSON)
+    └── eval_weave.py                  # Eval runner (tracked in W&B Weave dashboard)
 ```
 
 ## Tech Stack
