@@ -71,6 +71,8 @@ DATASETS_DIR = Path(__file__).resolve().parent.parent / "datasets" / "eval"
 EVAL_TEMPERATURE = 0.3  # low temperature for more deterministic responses
 JUDGE_TEMPERATURE = 0.1  # very low for consistent scoring
 REQUEST_TIMEOUT = 120.0  # seconds — 7B models can be slow on first load
+RETRY_ATTEMPTS = 3
+RETRY_DELAY = 10  # seconds — gives Ollama time to load a new model
 
 # The judge prompt — this is the core of LLM-as-judge evaluation.
 # It instructs the model to act as a grader and return a structured score.
@@ -102,6 +104,25 @@ Respond with ONLY a JSON object in this exact format:
 # ---------------------------------------------------------------------------
 
 
+def _post_with_retry(url: str, **kwargs) -> httpx.Response:
+    """POST with retry for transient errors (502/504).
+
+    When Ollama switches models, the first request often fails because it
+    needs to unload one model and load another into VRAM. Retrying after
+    a short delay handles this gracefully.
+    """
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        resp = httpx.post(url, timeout=REQUEST_TIMEOUT, **kwargs)
+        if resp.status_code in (502, 504) and attempt < RETRY_ATTEMPTS:
+            print(f"\n    Retry {attempt}/{RETRY_ATTEMPTS} (got {resp.status_code}, "
+                  f"waiting {RETRY_DELAY}s for model load)...", end=" ", flush=True)
+            time.sleep(RETRY_DELAY)
+            continue
+        resp.raise_for_status()
+        return resp
+    return resp  # unreachable, but keeps type checkers happy
+
+
 def chat(
     gateway_url: str,
     message: str,
@@ -116,12 +137,10 @@ def chat(
         "temperature": temperature,
         "use_rag": use_rag,
     }
-    resp = httpx.post(
+    resp = _post_with_retry(
         f"{gateway_url}/chat",
         json=payload,
-        timeout=REQUEST_TIMEOUT,
     )
-    resp.raise_for_status()
     return resp.json()
 
 
