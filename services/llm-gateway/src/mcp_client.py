@@ -17,9 +17,8 @@ Servers are configured via mcp_servers.json (same format as Claude Desktop):
         }
     }
 
-Each server is launched as a subprocess (stdio transport) or connected
-via HTTP (streamable_http transport). Tools from all servers are merged
-with local tools from tools.py.
+Each server is launched as a subprocess using stdio transport. Tools from
+all servers are merged with local tools from tools.py.
 """
 
 import asyncio
@@ -34,8 +33,13 @@ from mcp.client.stdio import stdio_client
 
 logger = logging.getLogger(__name__)
 
-# Path to MCP server config — same format as Claude Desktop
-_CONFIG_PATH = Path(__file__).resolve().parent.parent / "mcp_servers.json"
+# Config path: env var override or default to mcp_servers.json next to the src/ dir
+_CONFIG_PATH = Path(
+    os.getenv("MCP_CONFIG_PATH", Path(__file__).resolve().parent.parent / "mcp_servers.json")
+)
+
+# Timeout for connecting to each MCP server (seconds)
+_CONNECT_TIMEOUT = 30
 
 
 class MCPClientManager:
@@ -62,7 +66,12 @@ class MCPClientManager:
 
         for name, server_config in config.items():
             try:
-                await self._connect_stdio(name, server_config)
+                await asyncio.wait_for(
+                    self._connect_stdio(name, server_config),
+                    timeout=_CONNECT_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("MCP server '%s' timed out after %ds, skipping", name, _CONNECT_TIMEOUT)
             except Exception as e:
                 logger.warning("Failed to connect to MCP server '%s': %s", name, e)
 
@@ -82,14 +91,22 @@ class MCPClientManager:
 
     def get_tool_schemas(self) -> list[dict]:
         """Return Ollama-compatible tool schemas for all MCP tools."""
-        schemas = []
-        for tool_name, (_, schema) in self._tools.items():
-            schemas.append(schema)
-        return schemas
+        return [schema for _, schema in self._tools.values()]
 
     def get_tool_names(self) -> list[str]:
         """Return names of all available MCP tools."""
         return list(self._tools.keys())
+
+    def list_tools(self) -> list[dict]:
+        """Return tool info dicts for the /tools API endpoint."""
+        return [
+            {
+                "name": name,
+                "description": schema["function"]["description"],
+                "source": "mcp",
+            }
+            for name, (_, schema) in self._tools.items()
+        ]
 
     def has_tool(self, name: str) -> bool:
         """Check if a tool is provided by an MCP server."""
@@ -122,6 +139,7 @@ class MCPClientManager:
     def _load_config(self) -> dict:
         """Load MCP server config from mcp_servers.json."""
         if not _CONFIG_PATH.exists():
+            logger.info("MCP config not found at %s", _CONFIG_PATH)
             return {}
         try:
             with open(_CONFIG_PATH) as f:

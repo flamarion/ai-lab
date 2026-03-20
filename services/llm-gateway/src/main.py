@@ -459,15 +459,7 @@ async def list_tools():
         }
         for name, entry in tools.TOOL_REGISTRY.items()
     ]
-    mcp_tools = [
-        {
-            "name": name,
-            "description": schema["function"]["description"],
-            "source": "mcp",
-        }
-        for name, (_, schema) in mcp_manager._tools.items()
-    ]
-    return {"tools": local_tools + mcp_tools}
+    return {"tools": local_tools + mcp_manager.list_tools()}
 
 
 @app.post("/chat", response_model=ChatResponse)
