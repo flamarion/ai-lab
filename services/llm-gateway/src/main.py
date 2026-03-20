@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 import bcrypt
 from fastapi import FastAPI, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Add shared module to path (for local dev outside Docker)
 _shared_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "shared", "python")
@@ -462,41 +462,33 @@ async def list_tools():
     return {"tools": local_tools + mcp_manager.list_tools()}
 
 
-# --- MCP Server Management ---
+# --- MCP Server Management (admin-only — these endpoints can execute commands) ---
 
 
 class AddMCPServerRequest(BaseModel):
+    admin_user_id: str
     name: str
     command: str
-    args: list[str] = []
-    env: dict = {}
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+
+
+class MCPAdminRequest(BaseModel):
+    admin_user_id: str
 
 
 @app.get("/mcp/servers")
 async def list_mcp_servers():
     """List configured MCP servers and their connection status."""
-    config = mcp_manager.get_config()
-    connected = set(mcp_manager._sessions.keys())
-    return {
-        "servers": [
-            {
-                "name": name,
-                "command": cfg.get("command", ""),
-                "args": cfg.get("args", []),
-                "connected": name in connected,
-                "tools": [
-                    t_name for t_name, (s_name, _) in mcp_manager._tools.items()
-                    if s_name == name
-                ],
-            }
-            for name, cfg in config.items()
-        ]
-    }
+    return {"servers": mcp_manager.list_servers()}
 
 
 @app.post("/mcp/servers")
 async def add_mcp_server(request: AddMCPServerRequest):
-    """Add an MCP server to the config and reconnect."""
+    """Admin-only: add an MCP server to the config and reconnect."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(request.admin_user_id)
     if not request.name.strip():
         raise HTTPException(status_code=400, detail="Server name is required")
     mcp_manager.add_server(request.name.strip(), request.command, request.args, request.env)
@@ -505,8 +497,11 @@ async def add_mcp_server(request: AddMCPServerRequest):
 
 
 @app.delete("/mcp/servers/{name}")
-async def remove_mcp_server(name: str):
-    """Remove an MCP server from the config and reconnect."""
+async def remove_mcp_server(name: str, admin_user_id: str = Query(...)):
+    """Admin-only: remove an MCP server from the config and reconnect."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(admin_user_id)
     if not mcp_manager.remove_server(name):
         raise HTTPException(status_code=404, detail=f"Server '{name}' not found")
     await mcp_manager.reload()
@@ -514,8 +509,11 @@ async def remove_mcp_server(name: str):
 
 
 @app.post("/mcp/restart")
-async def restart_mcp():
-    """Reconnect to all configured MCP servers."""
+async def restart_mcp(request: MCPAdminRequest):
+    """Admin-only: reconnect to all configured MCP servers."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(request.admin_user_id)
     await mcp_manager.reload()
     return {"status": "restarted", "tools": mcp_manager.get_tool_names()}
 
