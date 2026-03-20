@@ -23,7 +23,7 @@ Usage:
     python scripts/eval_weave.py --gateway http://192.168.1.100/api
 
 Prerequisites:
-    pip install weave wandb httpx
+    pip install -r scripts/requirements.txt
 
 How it works:
     Weave Evaluation ties three things together:
@@ -49,6 +49,10 @@ from pathlib import Path
 
 import httpx
 import weave
+from dotenv import load_dotenv
+
+# Load .env from repo root so scripts pick up WANDB_API_KEY, GATEWAY_URL, etc.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -58,6 +62,8 @@ GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost/api")
 DATASETS_DIR = Path(__file__).resolve().parent.parent / "datasets" / "eval"
 EVAL_TEMPERATURE = 0.3
 REQUEST_TIMEOUT = 120.0
+RETRY_ATTEMPTS = 3
+RETRY_DELAY = 10  # seconds — gives Ollama time to load a new model
 
 JUDGE_PROMPT = """You are an AI response evaluator. Rate how well an AI assistant answered a question.
 
@@ -99,6 +105,25 @@ def _close_client() -> None:
         _http_client = None
 
 
+def _post_with_retry(url: str, **kwargs) -> httpx.Response:
+    """POST with retry for transient errors (502/504).
+
+    When Ollama switches models, the first request often fails because it
+    needs to unload one model and load another into VRAM. Retrying after
+    a short delay handles this gracefully.
+    """
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        resp = _get_client().post(url, **kwargs)
+        if resp.status_code in (502, 504) and attempt < RETRY_ATTEMPTS:
+            print(f"\n    Retry {attempt}/{RETRY_ATTEMPTS} (got {resp.status_code}, "
+                  f"waiting {RETRY_DELAY}s for model load)...", end=" ", flush=True)
+            time.sleep(RETRY_DELAY)
+            continue
+        resp.raise_for_status()
+        return resp
+    return resp  # unreachable, but keeps type checkers happy
+
+
 # ---------------------------------------------------------------------------
 # Weave Model — wraps the gateway
 # ---------------------------------------------------------------------------
@@ -126,11 +151,10 @@ class GatewayModel(weave.Model):
             "use_rag": use_rag,
         }
         start = time.time()
-        resp = _get_client().post(
+        resp = _post_with_retry(
             f"{self.gateway_url}/chat",
             json=payload,
         )
-        resp.raise_for_status()
         latency = round(time.time() - start, 2)
         data = resp.json()
         return {
@@ -184,7 +208,7 @@ def make_judge_scorer(gateway_url: str, judge_model: str):
             response=output["response"],
         )
         try:
-            resp = _get_client().post(
+            resp = _post_with_retry(
                 f"{gateway_url}/chat",
                 json={
                     "message": prompt,
@@ -192,7 +216,6 @@ def make_judge_scorer(gateway_url: str, judge_model: str):
                     "temperature": 0.1,
                 },
             )
-            resp.raise_for_status()
             judge_text = resp.json()["response"].strip()
 
             start = judge_text.find("{")
