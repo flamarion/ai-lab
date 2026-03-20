@@ -139,7 +139,15 @@ User → Streamlit (chat-ui:8501) → FastAPI (llm-gateway:8000) → Ollama (GPU
 - `GET /admin/users` — list all users with IDs and admin status
 - `POST /admin/reset-pin` — reset another user's PIN
 - `POST /admin/toggle-admin` — grant/revoke admin
+- `POST /admin/toggle-child` — flag/unflag a user as a child
+- `POST /admin/create-user` — create a user account (with optional is_child flag)
 - `POST /admin/delete-user` — delete a user (conversations become unowned)
+
+**MCP (admin-only — these endpoints can execute commands):**
+- `GET /mcp/servers` — list configured MCP servers with connection status and tools
+- `POST /mcp/servers` — add an MCP server to config and reconnect
+- `DELETE /mcp/servers/{name}` — remove an MCP server and reconnect
+- `POST /mcp/restart` — reconnect to all configured MCP servers
 
 **RAG:**
 - `POST /ingest` — upload a document for RAG (file upload, returns document_id + chunk count)

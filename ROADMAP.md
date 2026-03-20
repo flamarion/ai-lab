@@ -234,7 +234,7 @@ Phase 5 eval flow:
 ---
 
 ### Phase 6 — Tool Use & Function Calling ✅
-**What you built:** Tool registry, tool execution loop in gateway, calculator + current_time + web_search tools, Chat UI tools toggle
+**What you built:** Tool registry, tool execution loop in gateway, calculator + current_time tools, Chat UI tools toggle
 
 ```
 Phase 6 tool-use flow:
@@ -263,10 +263,10 @@ Phase 6 tool-use flow:
 - Tool schemas use JSON Schema (same as OpenAI function calling) — the model reads the description to decide when to call each tool
 - Multi-round tool use: the model can call tools multiple times in sequence (up to max_tool_rounds)
 - Safe eval for calculator: compile to AST, whitelist allowed names, no arbitrary code execution
-- DuckDuckGo HTML endpoint for web search — no API key needed
+
 
 **Key files:**
-- `services/llm-gateway/src/tools.py` — tool registry (calculator, current_time, web_search) + execution
+- `services/llm-gateway/src/tools.py` — tool registry (calculator, current_time) + execution
 - `services/llm-gateway/src/ollama_client.py` — `chat_with_tools()` method (tool call loop)
 - `services/llm-gateway/src/main.py` — `use_tools` flag in ChatRequest, `/tools` endpoint
 - `apps/chat-ui/app.py` — tools toggle in Settings, tool usage display in chat

@@ -159,7 +159,7 @@ def _logout():
     st.session_state.page = "Chat"
     # Clear only the uid param so reload doesn't auto-login
     if "uid" in st.query_params:
-        del st.query_params["uid"]
+        st.query_params.pop("uid", None)
     st.rerun()
 
 
@@ -206,7 +206,7 @@ if not st.session_state.user_id:
                 _load_preferences(st.session_state.preferences)
             else:
                 # Clear stale uid so we don't retry on every rerun
-                del st.query_params["uid"]
+                st.query_params.pop("uid", None)
         except Exception:
             # Clear stale uid and fall through to login screen
             st.query_params.pop("uid", None)
@@ -277,6 +277,7 @@ if not st.session_state.user_id:
                         st.session_state.username = data["username"]
                         st.session_state.is_admin = data.get("is_admin", False)
                         st.session_state.preferences = {}
+                        _load_preferences({})
                         st.query_params["uid"] = data["user_id"]
                         st.rerun()
                     else:
