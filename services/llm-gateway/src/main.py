@@ -462,6 +462,64 @@ async def list_tools():
     return {"tools": local_tools + mcp_manager.list_tools()}
 
 
+# --- MCP Server Management ---
+
+
+class AddMCPServerRequest(BaseModel):
+    name: str
+    command: str
+    args: list[str] = []
+    env: dict = {}
+
+
+@app.get("/mcp/servers")
+async def list_mcp_servers():
+    """List configured MCP servers and their connection status."""
+    config = mcp_manager.get_config()
+    connected = set(mcp_manager._sessions.keys())
+    return {
+        "servers": [
+            {
+                "name": name,
+                "command": cfg.get("command", ""),
+                "args": cfg.get("args", []),
+                "connected": name in connected,
+                "tools": [
+                    t_name for t_name, (s_name, _) in mcp_manager._tools.items()
+                    if s_name == name
+                ],
+            }
+            for name, cfg in config.items()
+        ]
+    }
+
+
+@app.post("/mcp/servers")
+async def add_mcp_server(request: AddMCPServerRequest):
+    """Add an MCP server to the config and reconnect."""
+    if not request.name.strip():
+        raise HTTPException(status_code=400, detail="Server name is required")
+    mcp_manager.add_server(request.name.strip(), request.command, request.args, request.env)
+    await mcp_manager.reload()
+    return {"status": "added", "name": request.name}
+
+
+@app.delete("/mcp/servers/{name}")
+async def remove_mcp_server(name: str):
+    """Remove an MCP server from the config and reconnect."""
+    if not mcp_manager.remove_server(name):
+        raise HTTPException(status_code=404, detail=f"Server '{name}' not found")
+    await mcp_manager.reload()
+    return {"status": "removed", "name": name}
+
+
+@app.post("/mcp/restart")
+async def restart_mcp():
+    """Reconnect to all configured MCP servers."""
+    await mcp_manager.reload()
+    return {"status": "restarted", "tools": mcp_manager.get_tool_names()}
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     # Model selection: explicit choice from user, or smart routing

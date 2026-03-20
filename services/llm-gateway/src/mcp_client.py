@@ -86,8 +86,41 @@ class MCPClientManager:
     async def stop(self):
         """Disconnect from all MCP servers."""
         await self._exit_stack.aclose()
+        self._exit_stack = AsyncExitStack()
         self._sessions.clear()
         self._tools.clear()
+
+    async def reload(self):
+        """Reconnect to all MCP servers (e.g. after config change)."""
+        logger.info("Reloading MCP servers...")
+        await self.stop()
+        await self.start()
+
+    def get_config(self) -> dict:
+        """Return the current MCP server config."""
+        return self._load_config()
+
+    def save_config(self, servers: dict):
+        """Write MCP server config to mcp_servers.json."""
+        data = {"mcpServers": servers}
+        with open(_CONFIG_PATH, "w") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+
+    def add_server(self, name: str, command: str, args: list[str], env: dict | None = None):
+        """Add a server to the config file (does not connect — call reload())."""
+        config = self._load_config()
+        config[name] = {"command": command, "args": args, "env": env or {}}
+        self.save_config(config)
+
+    def remove_server(self, name: str) -> bool:
+        """Remove a server from the config file (does not disconnect — call reload())."""
+        config = self._load_config()
+        if name not in config:
+            return False
+        del config[name]
+        self.save_config(config)
+        return True
 
     def get_tool_schemas(self) -> list[dict]:
         """Return Ollama-compatible tool schemas for all MCP tools."""
