@@ -50,6 +50,7 @@ LLM-as-judge explained:
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -127,14 +128,19 @@ def get_models(gateway_url: str) -> list[str]:
     return resp.json()["models"]
 
 
-def check_documents(gateway_url: str) -> int:
-    """Check how many documents are ingested (for RAG eval)."""
+def check_documents(gateway_url: str) -> int | None:
+    """Check how many documents are ingested (for RAG eval).
+
+    Returns the document count, or None if the endpoint is unreachable
+    (so callers can distinguish 'no docs' from 'can't tell').
+    """
     try:
         resp = httpx.get(f"{gateway_url}/documents", timeout=10.0)
         resp.raise_for_status()
         return len(resp.json().get("documents", []))
-    except Exception:
-        return 0
+    except Exception as exc:
+        print(f"  Warning: could not query {gateway_url}/documents: {exc}")
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +181,10 @@ def score_keywords(response_text: str, expected_keywords: list[str]) -> float:
     if not expected_keywords:
         return 1.0  # no keywords to check = pass
     lower_response = response_text.lower()
-    matches = sum(1 for kw in expected_keywords if kw.lower() in lower_response)
+    matches = sum(
+        1 for kw in expected_keywords
+        if re.search(r"\b" + re.escape(kw.lower()) + r"\b", lower_response)
+    )
     return matches / len(expected_keywords)
 
 
@@ -276,6 +285,20 @@ def run_eval(
                 result = chat(gateway_url, question, model, use_rag=use_rag)
                 response_text = result["response"]
                 latency = time.time() - start_time
+            except httpx.HTTPStatusError as e:
+                err_detail = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                print(f"ERROR: {err_detail}")
+                model_results.append({
+                    "id": case_id,
+                    "category": case["category"],
+                    "question": question,
+                    "response": f"ERROR: {err_detail}",
+                    "keyword_score": 0.0,
+                    "judge_score": 0,
+                    "judge_reason": f"Gateway error: {err_detail}",
+                    "latency_s": round(time.time() - start_time, 2),
+                })
+                continue
             except Exception as e:
                 print(f"ERROR: {e}")
                 model_results.append({
@@ -286,7 +309,7 @@ def run_eval(
                     "keyword_score": 0.0,
                     "judge_score": 0,
                     "judge_reason": f"Gateway error: {e}",
-                    "latency_s": time.time() - start_time,
+                    "latency_s": round(time.time() - start_time, 2),
                 })
                 continue
 
@@ -488,7 +511,15 @@ def main():
     # Check for RAG documents if rag category requested
     if "rag" in categories:
         doc_count = check_documents(gateway_url)
-        if doc_count == 0:
+        if doc_count is None:
+            # Vector store might still have docs — check health and run with a warning
+            vs_ok = health.get("vector_store", False)
+            if vs_ok:
+                print("  Could not query document count, but vector store is healthy — running RAG tests anyway")
+            else:
+                print("  Vector store unavailable — skipping RAG tests")
+                categories = [c for c in categories if c != "rag"]
+        elif doc_count == 0:
             print("  No documents ingested — skipping RAG tests")
             categories = [c for c in categories if c != "rag"]
         else:
