@@ -83,6 +83,38 @@ Services start at:
 
 Deploy scripts run `git pull --ff-only` then `docker compose up --build -d`. Containers run detached and use `restart: unless-stopped` to survive reboots.
 
+## Evaluation
+
+Run test cases against your models through the gateway, score responses with LLM-as-judge, and compare models side by side.
+
+```bash
+# Compare all available models on general + code datasets
+python scripts/eval.py --gateway http://localhost:8000
+
+# Test specific models
+python scripts/eval.py --models mistral:7b,qwen3.5:latest
+
+# Run only code tests
+python scripts/eval.py --categories code
+
+# Include RAG tests (requires ingested documents)
+python scripts/eval.py --categories general,code,rag
+
+# Use a consistent judge model across all evaluations
+python scripts/eval.py --judge-model mistral:7b
+
+# Save results to JSON for tracking over time
+python scripts/eval.py -o results.json
+```
+
+The runner scores each response two ways:
+- **Keyword check** — do expected terms appear in the response? (sanity baseline)
+- **LLM-as-judge** — a model rates the response 1-5 against grading criteria (the real score)
+
+Output includes a comparison table with averages by model, by category, and flags cases where models disagree by 2+ points.
+
+Test cases live in `datasets/eval/*.json` — add your own by following the same format (question, criteria, expected keywords).
+
 ## Repository Layout
 
 ```
@@ -92,6 +124,11 @@ ai-lab/
 ├── ROADMAP.md                         # Learning phases and progress
 ├── LICENSE
 ├── .env.example
+├── datasets/
+│   └── eval/
+│       ├── general.json               # General knowledge test cases (8)
+│       ├── code.json                  # Code/technical test cases (8)
+│       └── rag.json                   # RAG-dependent test cases (3)
 ├── apps/
 │   └── chat-ui/
 │       ├── app.py                     # Streamlit multi-page app (chat, settings, admin)
@@ -131,7 +168,8 @@ ai-lab/
     ├── deploy-app.sh                  # Deploy gateway + chat UI
     ├── deploy-data.sh                 # Deploy Postgres + Qdrant
     ├── aictl.sh                       # Unified service control
-    └── ingest.py                      # CLI tool for document ingestion
+    ├── ingest.py                      # CLI tool for document ingestion
+    └── eval.py                        # Eval runner (LLM-as-judge + model comparison)
 ```
 
 ## Tech Stack
@@ -142,8 +180,8 @@ Python 3.12, FastAPI, Streamlit, httpx, Ollama, Postgres 16 (asyncpg), Qdrant, b
 
 See [ROADMAP.md](ROADMAP.md) for the full learning path and phase details.
 
-**Completed:** Phase 1 (Chat Platform) → Phase 2 (Homelab Deploy) → Phase 3 (Data Layer) → Phase 3.5 (Consolidation) → Phase 4 (RAG) → Phase 4.5 (Auth & UX)
+**Completed:** Phase 1 (Chat Platform) → Phase 2 (Homelab Deploy) → Phase 3 (Data Layer) → Phase 3.5 (Consolidation) → Phase 4 (RAG) → Phase 4.5 (Auth & UX) → Phase 5 (Evaluation)
 
-**Next:** Phase 5 (Evaluation) or child guardrails
+**Next:** Child guardrails or Phase 6 (Tool Use & Function Calling)
 
-**Future:** Tool use & function calling → Agents → Multi-agent systems
+**Future:** Agents → Multi-agent systems
