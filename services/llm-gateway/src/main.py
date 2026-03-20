@@ -17,7 +17,7 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
     sys.path.insert(0, _shared_path)
 
 from ai_lab_common.config import settings
-from src import chunker, db, migrations, router, vector_store
+from src import chunker, db, migrations, router, tools, vector_store
 from src.ollama_client import OllamaClient
 
 logger = logging.getLogger(__name__)
@@ -111,6 +111,7 @@ class ChatRequest(BaseModel):
     num_predict: int | None = None
     system_prompt: str | None = None
     use_rag: bool = False
+    use_tools: bool = False
     history: list[dict] = []
     conversation_id: str | None = None
     user_id: str | None = None
@@ -120,6 +121,7 @@ class ChatResponse(BaseModel):
     response: str
     model: str
     conversation_id: str
+    tools_used: list[dict] = []
 
 
 class RegisterRequest(BaseModel):
@@ -411,6 +413,20 @@ async def list_models():
         raise HTTPException(status_code=502, detail=f"Failed to reach Ollama: {e}")
 
 
+@app.get("/tools")
+async def list_tools():
+    """List available tools that can be used with use_tools=True."""
+    return {
+        "tools": [
+            {
+                "name": name,
+                "description": entry["schema"]["function"]["description"],
+            }
+            for name, entry in tools.TOOL_REGISTRY.items()
+        ]
+    }
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     # Model selection: explicit choice from user, or smart routing
@@ -465,13 +481,23 @@ async def chat(request: ChatRequest):
     if request.num_predict is not None:
         options["num_predict"] = request.num_predict
 
-    # Call Ollama
+    # Call Ollama — with or without tool use
+    tools_used = []
     try:
-        response_text = await client.chat(
-            model=model,
-            messages=messages,
-            options=options,
-        )
+        if request.use_tools:
+            response_text, tools_used = await client.chat_with_tools(
+                model=model,
+                messages=messages,
+                options=options,
+            )
+            if tools_used:
+                logger.info("Tools used: %s", [t["name"] for t in tools_used])
+        else:
+            response_text = await client.chat(
+                model=model,
+                messages=messages,
+                options=options,
+            )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Ollama error: {e}")
 
@@ -492,7 +518,12 @@ async def chat(request: ChatRequest):
             _generate_title(conversation_id, request.message, response_text, model)
         )
 
-    return ChatResponse(response=response_text, model=model, conversation_id=conversation_id)
+    return ChatResponse(
+        response=response_text,
+        model=model,
+        conversation_id=conversation_id,
+        tools_used=tools_used,
+    )
 
 
 async def _generate_title(

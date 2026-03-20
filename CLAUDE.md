@@ -124,7 +124,8 @@ User → Streamlit (chat-ui:8501) → FastAPI (llm-gateway:8000) → Ollama (GPU
 **Core:**
 - `GET /health` — health check (includes database + vector store status)
 - `GET /models` — list available Ollama models (embedding models filtered out)
-- `POST /chat` — chat completion (accepts model, message, temperature, top_p, num_predict, system_prompt, use_rag, user_id, history, conversation_id)
+- `GET /tools` — list available tools (name + description)
+- `POST /chat` — chat completion (accepts model, message, temperature, top_p, num_predict, system_prompt, use_rag, use_tools, user_id, history, conversation_id). When `use_tools=True`, the gateway orchestrates tool calls and returns `tools_used` in the response.
 
 **Auth:**
 - `GET /auth/users` — list usernames (for login dropdown, no IDs exposed)
@@ -198,6 +199,16 @@ Datasets: `general.json` (8 cases), `code.json` (8 cases), `rag.json` (3 cases �
 Two runners:
 - `scripts/eval.py` — standalone, terminal output + optional JSON export. No external service dependencies beyond the gateway.
 - `scripts/eval_weave.py` — uses `weave.Evaluation` framework. Results tracked in the W&B Weave dashboard with versioned datasets, model configs, and scorer history. Requires `WANDB_API_KEY`. The model is a `weave.Model` subclass wrapping the gateway's `/chat` endpoint; scorers are `@weave.op` functions.
+
+### Tool Use
+
+When `use_tools=True` in a chat request, the gateway sends tool schemas to Ollama alongside the messages. If the model returns `tool_calls`, the gateway executes them and feeds results back — repeating until the model produces a final text response (up to 5 rounds).
+
+Tools are defined in `services/llm-gateway/src/tools.py`. Each tool has a function and an Ollama-compatible schema. Adding a new tool: write a function that takes simple args and returns a string, add it to `TOOL_REGISTRY` with a schema. See the docstring in `tools.py` for a full guide with examples.
+
+Built-in tools: `calculator` (safe math eval), `current_time` (UTC date/time), `web_search` (DuckDuckGo HTML, no API key).
+
+Only tool-capable models work: llama3.1, qwen3.5. mistral:7b and llama3 do not support Ollama's tools API.
 
 ## Key Patterns
 
