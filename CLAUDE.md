@@ -195,6 +195,10 @@ By default each model judges itself (fair comparison). Use `--judge-model` for c
 
 Datasets: `general.json` (8 cases), `code.json` (8 cases), `rag.json` (3 cases — auto-skipped if no documents ingested).
 
+Two runners:
+- `scripts/eval.py` — standalone, terminal output + optional JSON export. No external service dependencies beyond the gateway.
+- `scripts/eval_weave.py` — uses `weave.Evaluation` framework. Results tracked in the W&B Weave dashboard with versioned datasets, model configs, and scorer history. Requires `WANDB_API_KEY`. The model is a `weave.Model` subclass wrapping the gateway's `/chat` endpoint; scorers are `@weave.op` functions.
+
 ## Key Patterns
 
 - **Config**: All settings via env vars, centralized in `shared/python/ai_lab_common/config.py`. A singleton `settings` object is imported everywhere. `WANDB_API_KEY` and `DATABASE_URL` should be set in `.env`.

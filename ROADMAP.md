@@ -222,12 +222,14 @@ Phase 5 eval flow:
 - Eval should test the whole system (gateway → routing → model), not just raw model output — that's why the runner hits `/chat`
 - Self-judging (each model judges itself) is fair for comparison; cross-model judging (one model judges all) is better for consistency
 - Low temperature during eval (0.3) and judging (0.1) reduces randomness so results are more reproducible
+- Weave Evaluation framework: `weave.Model` tracks config, `weave.Dataset` versions test cases, `@weave.op` scorers are logged — every run becomes a tracked experiment you can compare in the dashboard
 
 **Key files:**
 - `datasets/eval/general.json` — general knowledge and reasoning (8 cases)
 - `datasets/eval/code.json` — code generation and technical reasoning (8 cases)
 - `datasets/eval/rag.json` — RAG-dependent questions (3 cases, skipped if no docs)
-- `scripts/eval.py` — eval runner (dataset loading, scoring, model comparison, reporting)
+- `scripts/eval.py` — standalone eval runner (terminal output + optional JSON)
+- `scripts/eval_weave.py` — Weave-tracked eval runner (dashboard with versioned results)
 
 ---
 
