@@ -73,7 +73,7 @@ GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost/api")
 DATASETS_DIR = Path(__file__).resolve().parent.parent / "datasets" / "eval"
 EVAL_TEMPERATURE = 0.3  # low temperature for more deterministic responses
 JUDGE_TEMPERATURE = 0.1  # very low for consistent scoring
-REQUEST_TIMEOUT = 120.0  # seconds — 7B models can be slow on first load
+REQUEST_TIMEOUT = 300.0  # seconds — must be >= nginx proxy_read_timeout (300s)
 RETRY_ATTEMPTS = 3
 RETRY_DELAY = 10  # seconds — gives Ollama time to load a new model
 

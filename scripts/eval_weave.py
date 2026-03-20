@@ -61,7 +61,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost/api")
 DATASETS_DIR = Path(__file__).resolve().parent.parent / "datasets" / "eval"
 EVAL_TEMPERATURE = 0.3
-REQUEST_TIMEOUT = 120.0
+REQUEST_TIMEOUT = 300.0  # seconds — must be >= nginx proxy_read_timeout (300s)
 RETRY_ATTEMPTS = 3
 RETRY_DELAY = 10  # seconds — gives Ollama time to load a new model
 

@@ -14,9 +14,9 @@ else:
 
 
 class OllamaClient:
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, timeout: float = 300.0):
         self.base_url = base_url.rstrip("/")
-        self.http = httpx.AsyncClient(base_url=self.base_url, timeout=120.0)
+        self.http = httpx.AsyncClient(base_url=self.base_url, timeout=timeout)
 
     @_trace
     async def chat(self, model: str, messages: list[dict], options: dict | None = None) -> str:
