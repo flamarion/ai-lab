@@ -39,6 +39,7 @@ How it works:
 """
 
 import argparse
+import asyncio
 import json
 import os
 import re
@@ -79,6 +80,24 @@ Rate 1-5:
 
 Respond with ONLY a JSON object: {{"score": <1-5>, "reason": "<one sentence>"}}"""
 
+# Shared httpx client for connection pooling across all requests.
+# Created once, reused by the model and scorers, closed at exit.
+_http_client: httpx.Client | None = None
+
+
+def _get_client() -> httpx.Client:
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.Client(timeout=REQUEST_TIMEOUT)
+    return _http_client
+
+
+def _close_client() -> None:
+    global _http_client
+    if _http_client is not None:
+        _http_client.close()
+        _http_client = None
+
 
 # ---------------------------------------------------------------------------
 # Weave Model — wraps the gateway
@@ -107,10 +126,9 @@ class GatewayModel(weave.Model):
             "use_rag": use_rag,
         }
         start = time.time()
-        resp = httpx.post(
+        resp = _get_client().post(
             f"{self.gateway_url}/chat",
             json=payload,
-            timeout=REQUEST_TIMEOUT,
         )
         resp.raise_for_status()
         latency = round(time.time() - start, 2)
@@ -128,7 +146,7 @@ class GatewayModel(weave.Model):
 
 
 @weave.op
-def keyword_score(expected_keywords: list, output: dict) -> dict:
+def keyword_score(expected_keywords: list[str], output: dict) -> dict:
     """Check what fraction of expected keywords appear (word-boundary match).
 
     This is a sanity baseline — if the response doesn't mention key terms,
@@ -166,14 +184,13 @@ def make_judge_scorer(gateway_url: str, judge_model: str):
             response=output["response"],
         )
         try:
-            resp = httpx.post(
+            resp = _get_client().post(
                 f"{gateway_url}/chat",
                 json={
                     "message": prompt,
                     "model": judge_model,
                     "temperature": 0.1,
                 },
-                timeout=REQUEST_TIMEOUT,
             )
             resp.raise_for_status()
             judge_text = resp.json()["response"].strip()
@@ -185,10 +202,22 @@ def make_judge_scorer(gateway_url: str, judge_model: str):
                 score = int(parsed.get("score", 0))
                 reason = parsed.get("reason", "no reason given")
                 if 1 <= score <= 5:
-                    return {"judge_score": score, "judge_reason": reason}
-            return {"judge_score": 0, "judge_reason": f"Could not parse: {judge_text[:100]}"}
+                    return {
+                        "judge_score": score,
+                        "judge_reason": reason,
+                        "judge_model": judge_model,
+                    }
+            return {
+                "judge_score": 0,
+                "judge_reason": f"Could not parse: {judge_text[:100]}",
+                "judge_model": judge_model,
+            }
         except Exception as e:
-            return {"judge_score": 0, "judge_reason": f"Judge failed: {e}"}
+            return {
+                "judge_score": 0,
+                "judge_reason": f"Judge failed: {e}",
+                "judge_model": judge_model,
+            }
 
     return judge_score
 
@@ -230,14 +259,14 @@ def load_weave_dataset(categories: list[str], name: str = "ai-lab-eval") -> weav
 
 
 def get_models(gateway_url: str) -> list[str]:
-    resp = httpx.get(f"{gateway_url}/models", timeout=10.0)
+    resp = _get_client().get(f"{gateway_url}/models", timeout=10.0)
     resp.raise_for_status()
     return resp.json()["models"]
 
 
 def check_documents(gateway_url: str) -> int | None:
     try:
-        resp = httpx.get(f"{gateway_url}/documents", timeout=10.0)
+        resp = _get_client().get(f"{gateway_url}/documents", timeout=10.0)
         resp.raise_for_status()
         return len(resp.json().get("documents", []))
     except Exception as exc:
@@ -248,6 +277,39 @@ def check_documents(gateway_url: str) -> int | None:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+
+async def run_evaluations(
+    models: list[str],
+    gateway_url: str,
+    judge_model_override: str | None,
+    dataset: weave.Dataset,
+) -> None:
+    """Run evaluations for all models under a single event loop."""
+    scorers = [keyword_score]
+
+    for model_name in models:
+        judge_model = judge_model_override or model_name
+        judge_scorer = make_judge_scorer(gateway_url, judge_model)
+        model_scorers = scorers + [judge_scorer]
+
+        print(f"\n{'='*60}")
+        print(f"  Evaluating: {model_name} (judge: {judge_model})")
+        print(f"{'='*60}")
+
+        model = GatewayModel(
+            model_name=model_name,
+            temperature=EVAL_TEMPERATURE,
+            gateway_url=gateway_url,
+        )
+
+        evaluation = weave.Evaluation(
+            name=f"eval-{model_name.replace(':', '-')}",
+            dataset=dataset,
+            scorers=model_scorers,
+        )
+
+        await evaluation.evaluate(model)
 
 
 def main():
@@ -272,7 +334,7 @@ def main():
     # Verify gateway
     print("Connecting to gateway...")
     try:
-        health = httpx.get(f"{gateway_url}/health", timeout=5.0).json()
+        health = _get_client().get(f"{gateway_url}/health", timeout=5.0).json()
         print(f"  Gateway: OK (db={health.get('database')}, vectors={health.get('vector_store')})")
     except Exception as e:
         print(f"  ERROR: Cannot reach gateway at {gateway_url}: {e}")
@@ -314,35 +376,15 @@ def main():
     dataset = load_weave_dataset(categories)
     print(f"  Total: {len(dataset.rows)} test cases")
 
-    # Build scorers
-    # The keyword scorer works for all models. The judge scorer needs
-    # a specific model — if none specified, we create per-model judges.
-    scorers = [keyword_score]
+    if len(dataset.rows) == 0:
+        print("  ERROR: No test cases loaded. Check dataset categories and JSON files.")
+        sys.exit(1)
 
-    # Run evaluation for each model
-    for model_name in models:
-        judge_model = args.judge_model or model_name
-        judge_scorer = make_judge_scorer(gateway_url, judge_model)
-        model_scorers = scorers + [judge_scorer]
-
-        print(f"\n{'='*60}")
-        print(f"  Evaluating: {model_name} (judge: {judge_model})")
-        print(f"{'='*60}")
-
-        model = GatewayModel(
-            model_name=model_name,
-            temperature=EVAL_TEMPERATURE,
-            gateway_url=gateway_url,
-        )
-
-        evaluation = weave.Evaluation(
-            name=f"eval-{model_name.replace(':', '-')}",
-            dataset=dataset,
-            scorers=model_scorers,
-        )
-
-        import asyncio
-        asyncio.run(evaluation.evaluate(model))
+    # Run all evaluations under a single event loop
+    try:
+        asyncio.run(run_evaluations(models, gateway_url, args.judge_model, dataset))
+    finally:
+        _close_client()
 
     print(f"\nDone. View results at: https://wandb.ai/weave → project '{args.project}'")
 

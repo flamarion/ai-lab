@@ -122,7 +122,9 @@ Test cases live in `datasets/eval/*.json` — add your own by following the same
 For tracked evaluations with the W&B Weave dashboard — versioned datasets, model configs, scorer results, and run-over-run comparison:
 
 ```bash
+# Prerequisites: pip install weave wandb httpx
 # Requires WANDB_API_KEY set in your environment
+
 python scripts/eval_weave.py
 
 # Specific model with a consistent judge
