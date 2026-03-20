@@ -89,23 +89,25 @@ Run test cases against your models through the gateway, score responses with LLM
 
 ```bash
 # Compare all available models on general + code datasets
-python scripts/eval.py --gateway http://localhost:8000
+python scripts/eval.py --gateway http://localhost/api
 
 # Test specific models
-python scripts/eval.py --models mistral:7b,qwen3.5:latest
+python scripts/eval.py --models mistral:7b,qwen3.5:latest --gateway http://localhost/api
 
 # Run only code tests
-python scripts/eval.py --categories code
+python scripts/eval.py --categories code --gateway http://localhost/api
 
 # Include RAG tests (requires ingested documents)
-python scripts/eval.py --categories general,code,rag
+python scripts/eval.py --categories general,code,rag --gateway http://localhost/api
 
 # Use a consistent judge model across all evaluations
-python scripts/eval.py --judge-model mistral:7b
+python scripts/eval.py --judge-model mistral:7b --gateway http://localhost/api
 
 # Save results to JSON for tracking over time
-python scripts/eval.py -o results.json
+python scripts/eval.py -o results.json --gateway http://localhost/api
 ```
+
+The gateway runs behind nginx at `/api` — use `http://localhost/api` (or `http://<ai-app-vm-ip>/api` from another machine).
 
 The runner scores each response two ways:
 - **Keyword check** — do expected terms appear in the response? (sanity baseline)
