@@ -205,9 +205,24 @@ Two runners:
 
 When `use_tools=True` in a chat request, the gateway sends tool schemas to Ollama alongside the messages. If the model returns `tool_calls`, the gateway executes them and feeds results back — repeating until the model produces a final text response (up to 5 rounds).
 
-Tools are defined in `services/llm-gateway/src/tools.py`. Each tool has a function and an Ollama-compatible schema. Adding a new tool: write a function that takes simple args and returns a string, add it to `TOOL_REGISTRY` with a schema. See the docstring in `tools.py` for a full guide with examples.
+Tools come from two sources:
+- **Local tools** (`services/llm-gateway/src/tools.py`): `calculator` (safe math eval), `current_time` (UTC date/time). Adding a new tool: write a function + schema in `TOOL_REGISTRY`. See the docstring in `tools.py` for a full guide.
+- **MCP servers** (`services/llm-gateway/mcp_servers.json`): community tool servers connected via the Model Context Protocol. Default: `mcp-server-fetch` (reads URLs as markdown). Add more by editing the JSON config — same format as Claude Desktop.
 
-Built-in tools: `calculator` (safe math eval), `current_time` (UTC date/time), `web_search` (DuckDuckGo HTML, no API key).
+The gateway merges both tool lists and routes calls to the right place (MCP or local).
+
+MCP server config format (in `mcp_servers.json`):
+```json
+{
+  "mcpServers": {
+    "server-name": {
+      "command": "python",
+      "args": ["-m", "module_name"],
+      "env": {}
+    }
+  }
+}
+```
 
 Only tool-capable models work: llama3.1, qwen3.5. mistral:7b and llama3 do not support Ollama's tools API.
 

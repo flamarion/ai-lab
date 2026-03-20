@@ -18,6 +18,7 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
 
 from ai_lab_common.config import settings
 from src import chunker, db, migrations, router, tools, vector_store
+from src.mcp_client import mcp_manager
 from src.ollama_client import OllamaClient
 
 logger = logging.getLogger(__name__)
@@ -91,7 +92,15 @@ async def lifespan(app: FastAPI):
         logger.warning("Failed to connect to Qdrant: %s — RAG disabled.", e)
 
     client = OllamaClient(settings.OLLAMA_HOST)
+
+    # --- MCP server connections ---
+    try:
+        await mcp_manager.start()
+    except Exception as e:
+        logger.warning("MCP initialization failed: %s — MCP tools unavailable.", e)
+
     yield
+    await mcp_manager.stop()
     await client.close()
     await db.close_pool()
     vector_store.close_store()
@@ -442,15 +451,23 @@ async def list_models():
 @app.get("/tools")
 async def list_tools():
     """List available tools that can be used with use_tools=True."""
-    return {
-        "tools": [
-            {
-                "name": name,
-                "description": entry["schema"]["function"]["description"],
-            }
-            for name, entry in tools.TOOL_REGISTRY.items()
-        ]
-    }
+    local_tools = [
+        {
+            "name": name,
+            "description": entry["schema"]["function"]["description"],
+            "source": "local",
+        }
+        for name, entry in tools.TOOL_REGISTRY.items()
+    ]
+    mcp_tools = [
+        {
+            "name": name,
+            "description": schema["function"]["description"],
+            "source": "mcp",
+        }
+        for name, (_, schema) in mcp_manager._tools.items()
+    ]
+    return {"tools": local_tools + mcp_tools}
 
 
 @app.post("/chat", response_model=ChatResponse)

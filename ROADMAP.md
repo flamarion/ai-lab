@@ -283,15 +283,34 @@ Phase 6 tool-use flow:
 
 ---
 
-### Phase 7.5 — MCP (Model Context Protocol)
-**What you'll build:** Replace the custom tool registry with the MCP standard
-**What you'll learn:**
-- MCP is "USB for AI tools" — a standard protocol for tool discovery and execution
-- Any MCP-compatible tool server works with any MCP-compatible client (Claude Code, Cursor, etc. all use it)
-- How standards emerge: you built the custom version first (Phase 6), now you understand *why* a standard exists and what it solves
-- MCP server implementation: expose your existing tools as an MCP server
-- MCP client integration: connect to community MCP servers (databases, APIs, file systems)
-- The difference between building *your own* tools and plugging into an *ecosystem*
+### Phase 6.5 — MCP (Model Context Protocol) ✅
+**What you built:** MCP client in the gateway, hybrid tool architecture (local + MCP), configurable server connections
+
+```
+Phase 6.5 hybrid tool architecture:
+
+  Model → Gateway → MCP Client Manager → mcp-server-fetch (URL reader)
+                                        → ... more servers via config
+
+                  → tools.py (calculator, current_time)
+
+  Configured via mcp_servers.json (same format as Claude Desktop)
+```
+
+**What you learned:**
+- MCP is "USB for AI tools" — a standard protocol for tool discovery and execution. Any MCP server works with any MCP client (Claude Code, Cursor, etc.)
+- Hybrid architecture: MCP for general-purpose tools (web, GitHub, databases), local tools.py for custom/homelab-specific functions
+- `mcp_servers.json` config: same format as Claude Desktop — add/remove servers without code changes
+- MCP stdio transport: the client spawns the server as a subprocess and communicates via stdin/stdout
+- Tool schema translation: MCP tools auto-convert to Ollama-compatible format
+- Why standards exist: building custom tools first (Phase 6) made the value of MCP obvious
+- Adding a new MCP server is config, not code. Adding a custom tool is still just a function + schema in tools.py
+
+**Key files:**
+- `services/llm-gateway/src/mcp_client.py` — MCP client manager (connects to servers, discovers tools, routes calls)
+- `services/llm-gateway/mcp_servers.json` — server config (same format as Claude Desktop)
+- `services/llm-gateway/src/tools.py` — local tools (calculator, current_time)
+- `services/llm-gateway/src/ollama_client.py` — merges MCP + local tools, routes calls to the right place
 
 ---
 
