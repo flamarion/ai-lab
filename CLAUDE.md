@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Workflow
+
+- **Always create a PR** for every change — never commit directly to main.
+- **No Claude attribution** — no `Co-Authored-By` lines in commits, no `Generated with Claude Code` footer in PR descriptions.
+- **No test plan section** in PR descriptions — just include the Summary.
+- **Check PR state before pushing** — the user merges PRs quickly. Always run `gh pr view <number> --json state` before pushing follow-up commits. If already merged, create a new branch from main.
+- **User merges to main** to test directly on the homelab (deploy scripts run `git pull --ff-only`).
+
 ## Project Overview
 
 Personal AI engineering lab for learning end-to-end AI system design. The goal is to build a mini AI platform from scratch: User → App → Model → Data → Evaluation → Improvement.
@@ -145,7 +153,7 @@ User → Streamlit (chat-ui:8501) → FastAPI (llm-gateway:8000) → Ollama (GPU
 
 Postgres stores conversations, messages, and document metadata. Qdrant stores document chunk vectors for RAG similarity search. The gateway connects to both via connection pools. If either is unreachable, the gateway degrades gracefully.
 
-Schema is managed via numbered SQL migrations in `infra/migrations/`. The gateway runs pending migrations automatically on startup (tracked in a `_migrations` table). To add a new migration, create `infra/migrations/003_description.sql` — it will be applied on the next deploy. Use `IF NOT EXISTS` / `IF EXISTS` for idempotency.
+Schema is managed via numbered SQL migrations in `infra/migrations/`. The gateway runs pending migrations automatically on startup (tracked in a `_migrations` table). To add a new migration, create `infra/migrations/NNN_description.sql` (next number in sequence) — it will be applied on the next deploy. Use `IF NOT EXISTS` / `IF EXISTS` for idempotency.
 
 Current migrations:
 - `001_conversations.sql` — conversations + messages tables + pgcrypto extension
