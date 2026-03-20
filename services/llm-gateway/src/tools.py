@@ -193,51 +193,6 @@ def current_time() -> str:
     return now.strftime("%Y-%m-%d %H:%M:%S UTC (%A)")
 
 
-def web_search(query: str) -> str:
-    """Search the web using DuckDuckGo and return top results.
-
-    Uses the DuckDuckGo HTML endpoint (no API key needed). Returns titles
-    and snippets for the top results, or an error message on failure.
-    """
-    import httpx
-
-    try:
-        resp = httpx.get(
-            "https://html.duckduckgo.com/html/",
-            params={"q": query},
-            headers={"User-Agent": "Mozilla/5.0 (AI Lab Gateway)"},
-            timeout=10.0,
-            follow_redirects=True,
-        )
-        resp.raise_for_status()
-
-        # Parse results from the HTML (DuckDuckGo's HTML endpoint)
-        # Each result is in a div with class "result"
-        import re
-
-        results = []
-        # Extract result titles and snippets
-        for match in re.finditer(
-            r'class="result__a"[^>]*>(.+?)</a>.*?'
-            r'class="result__snippet"[^>]*>(.+?)</span>',
-            resp.text,
-            re.DOTALL,
-        ):
-            title = re.sub(r"<[^>]+>", "", match.group(1)).strip()
-            snippet = re.sub(r"<[^>]+>", "", match.group(2)).strip()
-            if title and snippet:
-                results.append(f"- {title}: {snippet}")
-            if len(results) >= 5:
-                break
-
-        if results:
-            return "\n".join(results)
-        logger.warning("web_search: HTTP 200 but parsed 0 results — DuckDuckGo markup may have changed")
-        return "No results found."
-    except Exception as e:
-        return f"Search failed: {e}"
-
-
 # ---------------------------------------------------------------------------
 # Tool registry — maps tool names to (function, schema)
 # ---------------------------------------------------------------------------
@@ -280,29 +235,6 @@ TOOL_REGISTRY: dict[str, dict] = {
                     "type": "object",
                     "properties": {},
                     "required": [],
-                },
-            },
-        },
-    },
-    "web_search": {
-        "fn": web_search,
-        "schema": {
-            "type": "function",
-            "function": {
-                "name": "web_search",
-                "description": (
-                    "Search the web for current information. Use this when the user asks "
-                    "about recent events, news, or anything that requires up-to-date data."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The search query",
-                        }
-                    },
-                    "required": ["query"],
                 },
             },
         },

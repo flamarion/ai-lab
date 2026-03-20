@@ -6,6 +6,7 @@ import httpx
 
 from ai_lab_common.config import settings
 from src import tools
+from src.mcp_client import mcp_manager
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,8 @@ class OllamaClient:
         Returns (response_text, tools_used) where tools_used is a list of
         {"name": str, "arguments": dict, "result": str} for each tool call.
         """
-        tool_schemas = tools.get_tool_schemas()
+        # Merge local tools + MCP tools into one list for the model
+        tool_schemas = tools.get_tool_schemas() + mcp_manager.get_tool_schemas()
         tools_used = []
 
         for round_num in range(max_tool_rounds):
@@ -87,16 +89,20 @@ class OllamaClient:
             # Add the assistant's tool_calls message to history (verbatim)
             messages.append(msg)
 
-            loop = asyncio.get_running_loop()
             for tc in tool_calls:
                 fn_name = tc["function"]["name"]
                 fn_args = tc["function"]["arguments"]
 
-                # Run tools in threadpool so sync I/O (e.g. web_search)
-                # doesn't block the async event loop
-                result = await loop.run_in_executor(
-                    None, partial(tools.execute_tool, fn_name, fn_args)
-                )
+                # Route to MCP or local tool
+                if mcp_manager.has_tool(fn_name):
+                    result = await mcp_manager.call_tool(fn_name, fn_args)
+                else:
+                    # Run local tools in threadpool (they may do sync I/O)
+                    loop = asyncio.get_running_loop()
+                    result = await loop.run_in_executor(
+                        None, partial(tools.execute_tool, fn_name, fn_args)
+                    )
+
                 tools_used.append({
                     "name": fn_name,
                     "arguments": fn_args,

@@ -572,8 +572,87 @@ elif st.session_state.page == "Settings":
         value=prefs.get("use_tools", _ADV_DEFAULTS["use_tools"]),
         key="adv_use_tools",
         on_change=_save_preferences,
-        help="Let the model use tools (calculator, web search, current time). Requires a tool-capable model (llama3.1, qwen3.5).",
+        help="Let the model use tools (calculator, current time, MCP tools). Requires a tool-capable model (llama3.1, qwen3.5).",
     )
+
+    # MCP server management — admin-only (these endpoints can execute commands)
+    if st.session_state.is_admin:
+        st.divider()
+        st.subheader("MCP Servers")
+        st.caption("MCP servers provide additional tools (web fetch, GitHub, etc.)")
+
+        # Show configured servers
+        try:
+            mcp_resp = httpx.get(f"{GATEWAY_URL}/mcp/servers", timeout=5.0)
+            if mcp_resp.status_code == 200:
+                servers = mcp_resp.json().get("servers", [])
+                if servers:
+                    for srv in servers:
+                        status = "Connected" if srv["connected"] else "Disconnected"
+                        tool_list = ", ".join(srv["tools"]) if srv["tools"] else "no tools"
+                        col1, col2 = st.columns([4, 1])
+                        with col1:
+                            st.markdown(f"**{srv['name']}** — {status} ({tool_list})")
+                            st.caption(f"`{srv['command']} {' '.join(srv['args'])}`")
+                        with col2:
+                            if st.button("Remove", key=f"mcp_rm_{srv['name']}", use_container_width=True):
+                                try:
+                                    httpx.delete(
+                                        f"{GATEWAY_URL}/mcp/servers/{srv['name']}",
+                                        params={"admin_user_id": st.session_state.user_id},
+                                        timeout=10.0,
+                                    )
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(str(e))
+                else:
+                    st.info("No MCP servers configured")
+        except Exception:
+            st.warning("Could not fetch MCP server status")
+
+        # Add new server
+        with st.expander("Add MCP server"):
+            mcp_name = st.text_input("Server name", placeholder="e.g. github", key="mcp_add_name")
+            mcp_command = st.text_input("Command", placeholder="e.g. python", key="mcp_add_cmd")
+            mcp_args = st.text_input("Arguments (space-separated)", placeholder="e.g. -m mcp_server_fetch", key="mcp_add_args")
+            if st.button("Add server", use_container_width=True):
+                if mcp_name.strip() and mcp_command.strip():
+                    args_list = mcp_args.split() if mcp_args.strip() else []
+                    try:
+                        resp = httpx.post(
+                            f"{GATEWAY_URL}/mcp/servers",
+                            json={
+                                "admin_user_id": st.session_state.user_id,
+                                "name": mcp_name.strip(),
+                                "command": mcp_command.strip(),
+                                "args": args_list,
+                            },
+                            timeout=30.0,
+                        )
+                        if resp.status_code == 200:
+                            st.success(f"Added '{mcp_name.strip()}'")
+                            st.rerun()
+                        else:
+                            st.error(resp.json().get("detail", "Failed to add server"))
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+                else:
+                    st.warning("Name and command are required")
+
+        if st.button("Restart MCP connections", use_container_width=True):
+            try:
+                resp = httpx.post(
+                    f"{GATEWAY_URL}/mcp/restart",
+                    json={"admin_user_id": st.session_state.user_id},
+                    timeout=30.0,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    st.success(f"Restarted — {len(data.get('tools', []))} tool(s) available")
+                else:
+                    st.error("Restart failed")
+            except Exception as e:
+                st.error(f"Error: {e}")
 
     st.divider()
     st.subheader("Upload Documents")

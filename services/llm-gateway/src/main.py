@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 import bcrypt
 from fastapi import FastAPI, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Add shared module to path (for local dev outside Docker)
 _shared_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "shared", "python")
@@ -18,6 +18,7 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
 
 from ai_lab_common.config import settings
 from src import chunker, db, migrations, router, tools, vector_store
+from src.mcp_client import mcp_manager
 from src.ollama_client import OllamaClient
 
 logger = logging.getLogger(__name__)
@@ -91,7 +92,15 @@ async def lifespan(app: FastAPI):
         logger.warning("Failed to connect to Qdrant: %s — RAG disabled.", e)
 
     client = OllamaClient(settings.OLLAMA_HOST)
+
+    # --- MCP server connections ---
+    try:
+        await mcp_manager.start()
+    except Exception as e:
+        logger.warning("MCP initialization failed: %s — MCP tools unavailable.", e)
+
     yield
+    await mcp_manager.stop()
     await client.close()
     await db.close_pool()
     vector_store.close_store()
@@ -442,15 +451,71 @@ async def list_models():
 @app.get("/tools")
 async def list_tools():
     """List available tools that can be used with use_tools=True."""
-    return {
-        "tools": [
-            {
-                "name": name,
-                "description": entry["schema"]["function"]["description"],
-            }
-            for name, entry in tools.TOOL_REGISTRY.items()
-        ]
-    }
+    local_tools = [
+        {
+            "name": name,
+            "description": entry["schema"]["function"]["description"],
+            "source": "local",
+        }
+        for name, entry in tools.TOOL_REGISTRY.items()
+    ]
+    return {"tools": local_tools + mcp_manager.list_tools()}
+
+
+# --- MCP Server Management (admin-only — these endpoints can execute commands) ---
+
+
+class AddMCPServerRequest(BaseModel):
+    admin_user_id: str
+    name: str
+    command: str
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+
+
+class MCPAdminRequest(BaseModel):
+    admin_user_id: str
+
+
+@app.get("/mcp/servers")
+async def list_mcp_servers():
+    """List configured MCP servers and their connection status."""
+    return {"servers": mcp_manager.list_servers()}
+
+
+@app.post("/mcp/servers")
+async def add_mcp_server(request: AddMCPServerRequest):
+    """Admin-only: add an MCP server to the config and reconnect."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(request.admin_user_id)
+    if not request.name.strip():
+        raise HTTPException(status_code=400, detail="Server name is required")
+    mcp_manager.add_server(request.name.strip(), request.command, request.args, request.env)
+    await mcp_manager.reload()
+    return {"status": "added", "name": request.name}
+
+
+@app.delete("/mcp/servers/{name}")
+async def remove_mcp_server(name: str, admin_user_id: str = Query(...)):
+    """Admin-only: remove an MCP server from the config and reconnect."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(admin_user_id)
+    if not mcp_manager.remove_server(name):
+        raise HTTPException(status_code=404, detail=f"Server '{name}' not found")
+    await mcp_manager.reload()
+    return {"status": "removed", "name": name}
+
+
+@app.post("/mcp/restart")
+async def restart_mcp(request: MCPAdminRequest):
+    """Admin-only: reconnect to all configured MCP servers."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(request.admin_user_id)
+    await mcp_manager.reload()
+    return {"status": "restarted", "tools": mcp_manager.get_tool_names()}
 
 
 @app.post("/chat", response_model=ChatResponse)
