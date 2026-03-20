@@ -23,7 +23,7 @@ Usage:
     python scripts/eval_weave.py --gateway http://192.168.1.100/api
 
 Prerequisites:
-    pip install weave wandb httpx
+    pip install -r scripts/requirements.txt
 
 How it works:
     Weave Evaluation ties three things together:

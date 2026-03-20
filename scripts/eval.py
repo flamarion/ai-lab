@@ -27,6 +27,9 @@ Usage:
     # Save results to a JSON file
     python scripts/eval.py --output results.json
 
+Prerequisites:
+    pip install -r scripts/requirements.txt
+
 How it works:
     1. Loads test cases from datasets/eval/*.json
     2. For each model, sends each test case to POST /chat
