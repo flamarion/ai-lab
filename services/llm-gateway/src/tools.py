@@ -4,24 +4,99 @@ Tools are functions the LLM can request during a conversation. The gateway
 executes them and feeds results back. The model never runs tools itself —
 it just asks for them via structured tool_calls in the response.
 
-Adding a new tool:
-    1. Write a function that takes simple args and returns a string
-    2. Add it to TOOL_REGISTRY with an Ollama-compatible schema
-    3. That's it — the gateway auto-discovers it
+=== HOW TO ADD A NEW TOOL ===
+
+Step 1: Write the function
+    - Takes simple args (str, int, float, bool) and returns a str
+    - Keep it focused — one tool, one job
+    - Handle errors internally (return error messages, don't raise)
+
+    def my_tool(query: str, limit: int = 5) -> str:
+        '''One-line description of what it does.'''
+        try:
+            result = do_something(query, limit)
+            return str(result)
+        except Exception as e:
+            return f"Error: {e}"
+
+Step 2: Add to TOOL_REGISTRY
+    - The key is the tool name (must match the schema name)
+    - "fn" points to your function
+    - "schema" is what the model sees — the description is critical because
+      the model reads it to decide WHEN to call your tool
+
+    "my_tool": {
+        "fn": my_tool,
+        "schema": {
+            "type": "function",
+            "function": {
+                "name": "my_tool",
+                "description": (
+                    "When to use this tool and what it does. Be specific — "
+                    "the model uses this to decide if the tool is relevant."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "What to search for",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max results to return (default 5)",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+    },
+
+Step 3: That's it — the gateway auto-discovers the tool.
+
+=== TIPS ===
+
+- The description is the most important part. The model reads it to decide
+  when to call the tool. Be specific: "Use this when the user asks about X"
+  works better than "Does X".
+
+- Parameter descriptions matter too — they tell the model what to pass.
+
+- Return strings, not dicts. The result goes back to the model as text in
+  a role:"tool" message.
+
+- Don't call external APIs that require secrets in the tool function itself.
+  If you need an API key, read it from config/env at module level.
+
+- Keep tools fast. The user is waiting while tools execute. If a tool is
+  slow, consider caching or timeouts.
+
+- Test your tool in isolation first:
+      python -c "from src.tools import my_tool; print(my_tool('test'))"
+
+=== SCHEMA REFERENCE ===
 
 The schema follows Ollama's format (same as OpenAI function calling):
     {
         "type": "function",
         "function": {
             "name": "tool_name",
-            "description": "What this tool does",
+            "description": "What this tool does — be specific!",
             "parameters": {
                 "type": "object",
-                "properties": { ... },
-                "required": [...]
+                "properties": {
+                    "arg_name": {
+                        "type": "string|integer|number|boolean",
+                        "description": "What this argument is for"
+                    }
+                },
+                "required": ["arg_name"]
             }
         }
     }
+
+Supported parameter types: string, integer, number, boolean, array, object.
 """
 
 import logging

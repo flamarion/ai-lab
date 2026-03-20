@@ -283,6 +283,18 @@ Phase 6 tool-use flow:
 
 ---
 
+### Phase 7.5 — MCP (Model Context Protocol)
+**What you'll build:** Replace the custom tool registry with the MCP standard
+**What you'll learn:**
+- MCP is "USB for AI tools" — a standard protocol for tool discovery and execution
+- Any MCP-compatible tool server works with any MCP-compatible client (Claude Code, Cursor, etc. all use it)
+- How standards emerge: you built the custom version first (Phase 6), now you understand *why* a standard exists and what it solves
+- MCP server implementation: expose your existing tools as an MCP server
+- MCP client integration: connect to community MCP servers (databases, APIs, file systems)
+- The difference between building *your own* tools and plugging into an *ecosystem*
+
+---
+
 ### Phase 8 — Multi-Agent Systems
 **What you'll build:** Specialized agents that collaborate on complex tasks
 **What you'll learn:**
