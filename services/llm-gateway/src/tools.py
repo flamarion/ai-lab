@@ -232,6 +232,7 @@ def web_search(query: str) -> str:
 
         if results:
             return "\n".join(results)
+        logger.warning("web_search: HTTP 200 but parsed 0 results — DuckDuckGo markup may have changed")
         return "No results found."
     except Exception as e:
         return f"Search failed: {e}"

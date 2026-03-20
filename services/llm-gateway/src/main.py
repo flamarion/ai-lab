@@ -305,11 +305,10 @@ async def change_pin(request: ChangePinRequest):
 async def _require_admin(admin_user_id: str) -> dict:
     """Validate that the given user_id belongs to an admin."""
     _validate_uuid(admin_user_id)
-    users = await db.list_users()
-    admin = next((u for u in users if u["id"] == admin_user_id), None)
-    if not admin or not admin.get("is_admin"):
+    user = await db.get_user_by_id(admin_user_id)
+    if not user or not user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
-    return admin
+    return user
 
 
 @app.get("/admin/users")
@@ -473,11 +472,14 @@ async def chat(request: ChatRequest):
     else:
         messages = list(request.history)
 
-    # Inject system prompt if provided
-    if request.system_prompt and request.system_prompt.strip():
-        messages.insert(0, {"role": "system", "content": request.system_prompt.strip()})
+    # Build a single system message from user prompt + RAG context.
+    # Models only honour the first system message, so we merge them.
+    system_parts = []
 
-    # RAG: retrieve relevant context and inject into the prompt
+    if request.system_prompt and request.system_prompt.strip():
+        system_parts.append(request.system_prompt.strip())
+
+    # RAG: retrieve relevant context
     if request.use_rag and vector_store.is_available():
         try:
             query_text = f"search_query: {request.message}"
@@ -491,13 +493,15 @@ async def chat(request: ChatRequest):
                     context_parts.append(f"[{source}]\n{r['text']}")
                 context = "\n---\n".join(context_parts)
 
-                rag_system = _RAG_SYSTEM_PROMPT.format(context=context)
-                messages.insert(0, {"role": "system", "content": rag_system})
+                system_parts.append(_RAG_SYSTEM_PROMPT.format(context=context))
                 logger.info("RAG: injected %d chunks into prompt", len(results))
             else:
                 logger.info("RAG: no relevant chunks found")
         except Exception as e:
             logger.warning("RAG search failed, proceeding without context: %s", e)
+
+    if system_parts:
+        messages.insert(0, {"role": "system", "content": "\n\n".join(system_parts)})
 
     messages.append({"role": "user", "content": request.message})
 
