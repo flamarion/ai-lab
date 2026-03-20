@@ -1,0 +1,24 @@
+{
+  "category": "rag",
+  "description": "RAG-dependent questions — requires ingested documents. Tests retrieval quality and grounding. Skipped automatically if no documents are ingested.",
+  "cases": [
+    {
+      "id": "rag-001",
+      "question": "Based on the ingested documents, what topics are covered?",
+      "criteria": "Should reference actual content from the ingested documents, not hallucinate. Should admit if it cannot find relevant information.",
+      "expected_keywords": []
+    },
+    {
+      "id": "rag-002",
+      "question": "Summarize the key points from the documents you have access to.",
+      "criteria": "Should produce a coherent summary grounded in the actual document content. Should not make up facts. Should mention source documents if possible.",
+      "expected_keywords": []
+    },
+    {
+      "id": "rag-003",
+      "question": "Is there any information in the documents about configuration or setup?",
+      "criteria": "Should search through document context and report findings accurately. Should say 'no relevant information found' if nothing matches rather than guessing.",
+      "expected_keywords": []
+    }
+  ]
+}

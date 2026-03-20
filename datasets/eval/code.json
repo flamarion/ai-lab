@@ -1,0 +1,54 @@
+{
+  "category": "code",
+  "description": "Code generation and technical reasoning — tests the models your router sends code prompts to",
+  "cases": [
+    {
+      "id": "code-001",
+      "question": "Write a Python function that checks if a string is a palindrome. Include type hints.",
+      "criteria": "Should produce working Python code with type hints. Should handle edge cases (empty string, single char). Should be clean and readable.",
+      "expected_keywords": ["def", "str", "bool"]
+    },
+    {
+      "id": "code-002",
+      "question": "What is the time complexity of looking up a key in a Python dictionary? Why?",
+      "criteria": "Should say O(1) average case. Should mention hash tables. Bonus for mentioning O(n) worst case due to collisions.",
+      "expected_keywords": ["O(1)", "hash"]
+    },
+    {
+      "id": "code-003",
+      "question": "Write a SQL query to find the top 5 users with the most conversations, showing username and conversation count.",
+      "criteria": "Should use JOIN, GROUP BY, ORDER BY DESC, and LIMIT 5. Table names don't need to match our schema exactly but the logic should be correct.",
+      "expected_keywords": ["SELECT", "JOIN", "GROUP BY", "ORDER BY", "LIMIT"]
+    },
+    {
+      "id": "code-004",
+      "question": "Explain the difference between a list and a tuple in Python. When would you use each?",
+      "criteria": "Should mention mutability as the key difference. Should give practical examples: tuples for fixed data (coordinates, DB rows), lists for collections that change.",
+      "expected_keywords": ["mutable", "immutable"]
+    },
+    {
+      "id": "code-005",
+      "question": "Write a bash one-liner to find all Python files modified in the last 24 hours.",
+      "criteria": "Should use find with -name '*.py' and -mtime 0 (or -mtime -1 or -mmin -1440). Must be a valid command.",
+      "expected_keywords": ["find", "*.py"]
+    },
+    {
+      "id": "code-006",
+      "question": "What does the async/await pattern solve? Give a concrete example in Python.",
+      "criteria": "Should explain non-blocking I/O and concurrency without threads. Example should show async def, await, and a practical use case (HTTP request, DB query, file I/O).",
+      "expected_keywords": ["async", "await", "concurrent"]
+    },
+    {
+      "id": "code-007",
+      "question": "Write a Python function that takes a list of numbers and returns a new list with duplicates removed, preserving the original order.",
+      "criteria": "Should produce working code. Should preserve order (so not just set()). A common approach is using a seen set with a list comprehension or loop.",
+      "expected_keywords": ["def", "list"]
+    },
+    {
+      "id": "code-008",
+      "question": "Explain what a Docker volume is and why you would use one instead of a bind mount.",
+      "criteria": "Should explain volumes are managed by Docker, persist beyond container lifetime, and are portable. Bind mounts tie to host paths. Volumes are preferred for production data (databases, etc).",
+      "expected_keywords": ["volume", "persist"]
+    }
+  ]
+}
