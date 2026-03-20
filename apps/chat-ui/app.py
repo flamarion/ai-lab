@@ -112,6 +112,11 @@ def _save_preferences():
     prefs = {
         "model": st.session_state.get("pref_model", "Auto (recommended)"),
         "temperature": st.session_state.get("pref_temperature", 0.7),
+        "top_p": st.session_state.get("adv_top_p", 0.9),
+        "num_predict": st.session_state.get("adv_num_predict", 1024),
+        "system_prompt": st.session_state.get("adv_system_prompt", ""),
+        "use_rag": st.session_state.get("adv_use_rag", False),
+        "use_tools": st.session_state.get("adv_use_tools", False),
     }
     try:
         httpx.patch(
@@ -125,6 +130,20 @@ def _save_preferences():
         pass
 
 
+def _load_preferences(prefs: dict):
+    """Apply saved preferences to session state so all pages see them."""
+    if not isinstance(prefs, dict):
+        return
+    for key, session_key, default in [
+        ("top_p", "adv_top_p", 0.9),
+        ("num_predict", "adv_num_predict", 1024),
+        ("system_prompt", "adv_system_prompt", ""),
+        ("use_rag", "adv_use_rag", False),
+        ("use_tools", "adv_use_tools", False),
+    ]:
+        st.session_state[session_key] = prefs.get(key, default)
+
+
 def _logout():
     st.session_state.user_id = None
     st.session_state.username = None
@@ -133,6 +152,9 @@ def _logout():
     st.session_state.messages = []
     st.session_state.conversation_id = None
     st.session_state.page = "Chat"
+    # Clear only the uid param so reload doesn't auto-login
+    if "uid" in st.query_params:
+        del st.query_params["uid"]
     st.rerun()
 
 
@@ -156,6 +178,33 @@ if "models" not in st.session_state:
         st.session_state.models = resp.json()["models"]
     except Exception:
         st.session_state.models = []
+
+# --- Session restore from URL params (survives browser reload) ---
+if not st.session_state.user_id:
+    saved_uid = st.query_params.get("uid")
+    # Normalize to single string (query params can be a list if duplicated)
+    if isinstance(saved_uid, list):
+        saved_uid = saved_uid[0] if saved_uid else None
+    if saved_uid:
+        try:
+            resp = httpx.get(
+                f"{GATEWAY_URL}/auth/session",
+                params={"user_id": saved_uid},
+                timeout=5.0,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                st.session_state.user_id = data["user_id"]
+                st.session_state.username = data["username"]
+                st.session_state.is_admin = data.get("is_admin", False)
+                st.session_state.preferences = data.get("preferences", {})
+                _load_preferences(st.session_state.preferences)
+            else:
+                # Clear stale uid so we don't retry on every rerun
+                del st.query_params["uid"]
+        except Exception:
+            # Clear stale uid and fall through to login screen
+            st.query_params.pop("uid", None)
 
 
 # ============================================================
@@ -194,6 +243,8 @@ if not st.session_state.user_id:
                             st.session_state.username = data["username"]
                             st.session_state.is_admin = data.get("is_admin", False)
                             st.session_state.preferences = data.get("preferences", {})
+                            _load_preferences(st.session_state.preferences)
+                            st.query_params["uid"] = data["user_id"]
                             st.rerun()
                         else:
                             st.error("Invalid PIN")
@@ -221,6 +272,7 @@ if not st.session_state.user_id:
                         st.session_state.username = data["username"]
                         st.session_state.is_admin = data.get("is_admin", False)
                         st.session_state.preferences = {}
+                        st.query_params["uid"] = data["user_id"]
                         st.rerun()
                     else:
                         st.error(resp.json().get("detail", "Registration failed"))
@@ -515,12 +567,14 @@ elif st.session_state.page == "Settings":
         "Max response length", 64, 4096,
         st.session_state.get("adv_num_predict", 1024), 64,
         key="adv_num_predict",
+        on_change=_save_preferences,
         help="Limit how long the response can be (in tokens, ~0.75 words each)",
     )
     st.slider(
         "Top P", 0.0, 1.0,
         st.session_state.get("adv_top_p", 0.9), 0.05,
         key="adv_top_p",
+        on_change=_save_preferences,
         help="Controls diversity. Lower = more focused, higher = more creative",
     )
     st.text_area(
@@ -528,6 +582,7 @@ elif st.session_state.page == "Settings":
         value=st.session_state.get("adv_system_prompt", ""),
         height=80,
         key="adv_system_prompt",
+        on_change=_save_preferences,
         help="Optional instructions the model follows for every message",
         placeholder="e.g. You are a helpful cooking assistant",
     )
@@ -535,12 +590,14 @@ elif st.session_state.page == "Settings":
         "Use documents (RAG)",
         value=st.session_state.get("adv_use_rag", False),
         key="adv_use_rag",
+        on_change=_save_preferences,
         help="Ground answers in your uploaded documents",
     )
     st.toggle(
         "Use tools",
         value=st.session_state.get("adv_use_tools", False),
         key="adv_use_tools",
+        on_change=_save_preferences,
         help="Let the model use tools (calculator, web search, current time). Requires a tool-capable model (llama3.1, qwen3.5).",
     )
 
