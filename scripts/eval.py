@@ -62,7 +62,7 @@ import httpx
 # Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_GATEWAY = os.getenv("GATEWAY_URL", "http://localhost/api")
+GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost/api")
 DATASETS_DIR = Path(__file__).resolve().parent.parent / "datasets" / "eval"
 EVAL_TEMPERATURE = 0.3  # low temperature for more deterministic responses
 JUDGE_TEMPERATURE = 0.1  # very low for consistent scoring
@@ -463,8 +463,8 @@ def main():
     )
     parser.add_argument(
         "--gateway",
-        default=DEFAULT_GATEWAY,
-        help=f"Gateway URL (default: {DEFAULT_GATEWAY})",
+        default=GATEWAY_URL,
+        help=f"Gateway URL (default: {GATEWAY_URL})",
     )
     parser.add_argument(
         "--models",

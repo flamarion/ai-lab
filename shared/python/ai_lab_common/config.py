@@ -8,6 +8,7 @@ class Settings:
     ROUTE_DEFAULT_MODEL: str = os.getenv("ROUTE_DEFAULT_MODEL", "mistral:7b")
     GATEWAY_HOST: str = os.getenv("GATEWAY_HOST", "0.0.0.0")
     GATEWAY_PORT: int = int(os.getenv("GATEWAY_PORT", "8000"))
+    GATEWAY_URL: str = os.getenv("GATEWAY_URL", "http://localhost/api")
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text-v2-moe")
     WEAVE_ENABLED: bool = os.getenv("WEAVE_ENABLED", "true").strip().lower() in ("true", "1", "yes")
     WANDB_PROJECT: str = os.getenv("WANDB_PROJECT", "ai-lab")

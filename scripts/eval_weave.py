@@ -53,7 +53,7 @@ import weave
 # Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_GATEWAY = os.getenv("GATEWAY_URL", "http://localhost/api")
+GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost/api")
 DATASETS_DIR = Path(__file__).resolve().parent.parent / "datasets" / "eval"
 EVAL_TEMPERATURE = 0.3
 REQUEST_TIMEOUT = 120.0
@@ -94,7 +94,7 @@ class GatewayModel(weave.Model):
 
     model_name: str
     temperature: float = EVAL_TEMPERATURE
-    gateway_url: str = DEFAULT_GATEWAY
+    gateway_url: str = GATEWAY_URL
 
     @weave.op
     def predict(self, question: str, category: str = "general") -> dict:
@@ -254,7 +254,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="AI Lab Weave Eval — tracked evaluation with W&B Weave dashboard",
     )
-    parser.add_argument("--gateway", default=DEFAULT_GATEWAY, help="Gateway URL")
+    parser.add_argument("--gateway", default=GATEWAY_URL, help="Gateway URL")
     parser.add_argument("--models", help="Comma-separated models (default: all available)")
     parser.add_argument("--categories", default="general,code", help="Dataset categories")
     parser.add_argument("--judge-model", help="Model for LLM-as-judge (default: model being tested)")
