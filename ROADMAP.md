@@ -98,7 +98,7 @@ Chat UI ──▶ LLM Gateway ──▶ Ollama (GPU PC)
 
 **Key files:**
 - `infra/docker/docker-compose.data.yml` — Postgres compose for ai-data VM
-- `infra/docker/init-db/001_schema.sql` — conversations + messages schema
+- `infra/migrations/001_conversations.sql` — conversations + messages schema
 - `scripts/deploy-data.sh` — deploy script for data services
 - `services/llm-gateway/src/db.py` — asyncpg connection pool and query functions
 - `services/llm-gateway/src/main.py` — /chat persistence + /conversations endpoints
@@ -167,7 +167,7 @@ Vector store:    Qdrant (Docker on ai-data VM)
 - `services/llm-gateway/src/ollama_client.py` — `embed()` method for Ollama /api/embed
 - `services/llm-gateway/src/main.py` — /ingest, /documents endpoints, RAG in /chat
 - `infra/docker/docker-compose.data.yml` — Qdrant service on ai-data VM
-- `infra/docker/init-db/002_rag_schema.sql` — documents table
+- `infra/migrations/002_documents.sql` — documents table
 - `scripts/ingest.py` — CLI tool for bulk document ingestion
 - `apps/chat-ui/app.py` — RAG toggle in Advanced settings
 
