@@ -356,6 +356,7 @@ if st.session_state.page == "Chat":
     num_predict = st.session_state.get("adv_num_predict", 1024)
     system_prompt = st.session_state.get("adv_system_prompt", "")
     use_rag = st.session_state.get("adv_use_rag", False)
+    use_tools = st.session_state.get("adv_use_tools", False)
 
     # Welcome screen
     if not st.session_state.messages:
@@ -436,6 +437,8 @@ if st.session_state.page == "Chat":
                         payload["system_prompt"] = system_prompt
                     if use_rag:
                         payload["use_rag"] = True
+                    if use_tools:
+                        payload["use_tools"] = True
                     if st.session_state.conversation_id:
                         payload["conversation_id"] = st.session_state.conversation_id
                     else:
@@ -449,11 +452,21 @@ if st.session_state.page == "Chat":
                     resp.raise_for_status()
                     data = resp.json()
                     answer = data["response"]
+                    tools_used = data.get("tools_used", [])
                     st.session_state.conversation_id = data.get("conversation_id")
                     success = True
                 except Exception as e:
                     answer = f"Error: {e}"
+                    tools_used = []
                     success = False
+
+            # Show tool usage before the answer
+            if tools_used:
+                with st.expander(f"Used {len(tools_used)} tool(s)", expanded=False):
+                    for t in tools_used:
+                        st.markdown(f"**{t['name']}**({', '.join(f'{k}={v!r}' for k, v in t['arguments'].items())})")
+                        st.code(t["result"], language=None)
+
             st.markdown(answer)
 
         if success:
@@ -523,6 +536,12 @@ elif st.session_state.page == "Settings":
         value=st.session_state.get("adv_use_rag", False),
         key="adv_use_rag",
         help="Ground answers in your uploaded documents",
+    )
+    st.toggle(
+        "Use tools",
+        value=st.session_state.get("adv_use_tools", False),
+        key="adv_use_tools",
+        help="Let the model use tools (calculator, web search, current time). Requires a tool-capable model (llama3.1, qwen3.5).",
     )
 
     st.divider()

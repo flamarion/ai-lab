@@ -233,13 +233,43 @@ Phase 5 eval flow:
 
 ---
 
-### Phase 6 — Tool Use & Function Calling
-**What you'll build:** Gateway supports tools (web search, DB queries, calculations)
-**What you'll learn:**
-- How models take actions, not just generate text
-- Function calling / tool use protocols
-- Safety: what happens when a model calls a dangerous tool?
-- The bridge from "chatbot" to "assistant"
+### Phase 6 — Tool Use & Function Calling ✅
+**What you built:** Tool registry, tool execution loop in gateway, calculator + current_time + web_search tools, Chat UI tools toggle
+
+```
+Phase 6 tool-use flow:
+
+  User: "What's 2847 * 391?"
+       │
+       ▼
+  ┌──────────────────────────────────────────────────┐
+  │  Gateway sends message + tool schemas to Ollama  │
+  │                                                  │
+  │  Ollama returns: tool_calls: [                   │
+  │    {calculator, {expression: "2847 * 391"}}      │
+  │  ]                                               │
+  │                                                  │
+  │  Gateway executes: calculator("2847 * 391")      │
+  │  → "1113177"                                     │
+  │                                                  │
+  │  Gateway feeds result back to Ollama             │
+  │  Ollama returns: "2847 × 391 = 1,113,177"       │
+  └──────────────────────────────────────────────────┘
+```
+
+**What you learned:**
+- Tool use protocol: model doesn't run tools — it *requests* them. The gateway orchestrates: send tools → get tool_calls → execute → feed result back → get final answer
+- Not all models support tool use: llama3.1+, qwen3.5 do; mistral:7b (raw mode only), llama3 (none). The model itself must support the tool_calls response format
+- Tool schemas use JSON Schema (same as OpenAI function calling) — the model reads the description to decide when to call each tool
+- Multi-round tool use: the model can call tools multiple times in sequence (up to max_tool_rounds)
+- Safe eval for calculator: compile to AST, whitelist allowed names, no arbitrary code execution
+- DuckDuckGo HTML endpoint for web search — no API key needed
+
+**Key files:**
+- `services/llm-gateway/src/tools.py` — tool registry (calculator, current_time, web_search) + execution
+- `services/llm-gateway/src/ollama_client.py` — `chat_with_tools()` method (tool call loop)
+- `services/llm-gateway/src/main.py` — `use_tools` flag in ChatRequest, `/tools` endpoint
+- `apps/chat-ui/app.py` — tools toggle in Settings, tool usage display in chat
 
 ---
 
