@@ -179,6 +179,22 @@ When `use_rag=True` in a chat request, the gateway embeds the user's question, s
 
 The embedding model uses prefixes for optimal performance: `search_document:` for ingested chunks, `search_query:` for user questions.
 
+### Evaluation
+
+`scripts/eval.py` runs test cases from `datasets/eval/*.json` against the gateway's `/chat` endpoint and scores responses. Two scoring methods:
+
+- **Keyword check**: word-boundary regex match — what fraction of expected keywords appear. Sanity baseline only.
+- **LLM-as-judge**: sends the question + criteria + response to a model, asks for a 1-5 score with reason. This is the primary scoring method.
+
+Test case format (in `datasets/eval/*.json`):
+```json
+{"id": "gen-001", "question": "...", "criteria": "...", "expected_keywords": ["..."]}
+```
+
+By default each model judges itself (fair comparison). Use `--judge-model` for cross-model consistency. Low temperatures: 0.3 for eval responses, 0.1 for judge scoring.
+
+Datasets: `general.json` (8 cases), `code.json` (8 cases), `rag.json` (3 cases — auto-skipped if no documents ingested).
+
 ## Key Patterns
 
 - **Config**: All settings via env vars, centralized in `shared/python/ai_lab_common/config.py`. A singleton `settings` object is imported everywhere. `WANDB_API_KEY` and `DATABASE_URL` should be set in `.env`.

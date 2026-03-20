@@ -21,8 +21,8 @@ Usage:
     # Include RAG tests (requires ingested documents)
     python scripts/eval.py --categories general,code,rag
 
-    # Use a different gateway URL
-    python scripts/eval.py --gateway http://192.168.1.100:8000
+    # Use a different gateway URL (e.g. from another machine on the LAN)
+    python scripts/eval.py --gateway http://192.168.1.100/api
 
     # Save results to a JSON file
     python scripts/eval.py --output results.json
@@ -62,7 +62,7 @@ import httpx
 # Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_GATEWAY = os.getenv("GATEWAY_URL", "http://localhost:8000")
+DEFAULT_GATEWAY = os.getenv("GATEWAY_URL", "http://localhost/api")
 DATASETS_DIR = Path(__file__).resolve().parent.parent / "datasets" / "eval"
 EVAL_TEMPERATURE = 0.3  # low temperature for more deterministic responses
 JUDGE_TEMPERATURE = 0.1  # very low for consistent scoring
