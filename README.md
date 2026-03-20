@@ -161,7 +161,9 @@ ai-lab/
 │       │   ├── db.py                  # asyncpg connection pool and queries
 │       │   ├── chunker.py             # Document loading and chunking
 │       │   ├── vector_store.py        # Qdrant wrapper (upsert, search, delete)
-│       │   └── migrations.py          # Auto-apply SQL migrations on startup
+│       │   ├── migrations.py          # Auto-apply SQL migrations on startup
+│       │   └── mcp_client.py          # MCP client manager (connect to MCP servers)
+│       ├── mcp_servers.json           # MCP server config (same format as Claude Desktop)
 │       ├── Dockerfile
 │       └── requirements.txt
 ├── shared/
@@ -193,14 +195,14 @@ ai-lab/
 
 ## Tech Stack
 
-Python 3.12, FastAPI, Streamlit, httpx, Ollama, Postgres 16 (asyncpg), Qdrant, bcrypt, W&B Weave, pypdf, Docker Compose
+Python 3.12, FastAPI, Streamlit, httpx, Ollama, Postgres 16 (asyncpg), Qdrant, bcrypt, W&B Weave, pypdf, MCP (Model Context Protocol), Docker Compose
 
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for the full learning path and phase details.
 
-**Completed:** Phase 1 (Chat Platform) → Phase 2 (Homelab Deploy) → Phase 3 (Data Layer) → Phase 3.5 (Consolidation) → Phase 4 (RAG) → Phase 4.5 (Auth & UX) → Phase 5 (Evaluation) → Phase 6 (Tool Use)
+**Completed:** Phase 1 (Chat Platform) → Phase 2 (Homelab Deploy) → Phase 3 (Data Layer) → Phase 3.5 (Consolidation) → Phase 4 (RAG) → Phase 4.5 (Auth & UX) → Phase 5 (Evaluation) → Phase 6 (Tool Use) → Phase 6.5 (MCP)
 
 **Next:** Phase 7 (Agents) or child guardrails
 
-**Future:** Agents → Multi-agent systems
+**Future:** Multi-agent systems
