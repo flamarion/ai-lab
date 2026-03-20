@@ -260,8 +260,8 @@ def execute_tool(name: str, arguments: dict) -> str:
 
     fn = entry["fn"]
     try:
-        result = fn(**arguments)
-        logger.info("Tool %s(%s) → %s", name, arguments, str(result)[:100])
+        result = str(fn(**arguments))
+        logger.info("Tool %s(%s) → %s", name, arguments, result[:100])
         return result
     except Exception as e:
         logger.error("Tool %s failed: %s", name, e)
