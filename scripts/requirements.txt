@@ -1,0 +1,4 @@
+httpx>=0.28.0
+python-dotenv>=1.0.0
+weave>=0.52.30
+wandb>=0.23.0

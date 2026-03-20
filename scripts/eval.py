@@ -57,6 +57,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
+from dotenv import load_dotenv
+
+# Load .env from repo root so scripts pick up GATEWAY_URL, etc.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # ---------------------------------------------------------------------------
 # Constants

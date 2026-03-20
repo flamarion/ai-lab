@@ -49,6 +49,10 @@ from pathlib import Path
 
 import httpx
 import weave
+from dotenv import load_dotenv
+
+# Load .env from repo root so scripts pick up WANDB_API_KEY, GATEWAY_URL, etc.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # ---------------------------------------------------------------------------
 # Constants
