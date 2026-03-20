@@ -8,6 +8,17 @@ import streamlit as st
 
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:8000")
 
+# Centralized defaults for advanced settings — single source of truth
+_ADV_DEFAULTS = {
+    "model": "Auto (recommended)",
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "num_predict": 1024,
+    "system_prompt": "",
+    "use_rag": False,
+    "use_tools": False,
+}
+
 # All file types supported for upload (matches chunker.SUPPORTED_EXTENSIONS)
 _ALL_TYPES = [
     "txt", "md", "rst", "csv", "tsv", "log",
@@ -110,13 +121,13 @@ def _save_preferences():
     if not st.session_state.get("user_id"):
         return
     prefs = {
-        "model": st.session_state.get("pref_model", "Auto (recommended)"),
-        "temperature": st.session_state.get("pref_temperature", 0.7),
-        "top_p": st.session_state.get("adv_top_p", 0.9),
-        "num_predict": st.session_state.get("adv_num_predict", 1024),
-        "system_prompt": st.session_state.get("adv_system_prompt", ""),
-        "use_rag": st.session_state.get("adv_use_rag", False),
-        "use_tools": st.session_state.get("adv_use_tools", False),
+        "model": st.session_state.get("pref_model", _ADV_DEFAULTS["model"]),
+        "temperature": st.session_state.get("pref_temperature", _ADV_DEFAULTS["temperature"]),
+        "top_p": st.session_state.get("adv_top_p", _ADV_DEFAULTS["top_p"]),
+        "num_predict": st.session_state.get("adv_num_predict", _ADV_DEFAULTS["num_predict"]),
+        "system_prompt": st.session_state.get("adv_system_prompt", _ADV_DEFAULTS["system_prompt"]),
+        "use_rag": st.session_state.get("adv_use_rag", _ADV_DEFAULTS["use_rag"]),
+        "use_tools": st.session_state.get("adv_use_tools", _ADV_DEFAULTS["use_tools"]),
     }
     try:
         httpx.patch(
@@ -134,14 +145,8 @@ def _load_preferences(prefs: dict):
     """Apply saved preferences to session state so all pages see them."""
     if not isinstance(prefs, dict):
         return
-    for key, session_key, default in [
-        ("top_p", "adv_top_p", 0.9),
-        ("num_predict", "adv_num_predict", 1024),
-        ("system_prompt", "adv_system_prompt", ""),
-        ("use_rag", "adv_use_rag", False),
-        ("use_tools", "adv_use_tools", False),
-    ]:
-        st.session_state[session_key] = prefs.get(key, default)
+    for key in ("top_p", "num_predict", "system_prompt", "use_rag", "use_tools"):
+        st.session_state[f"adv_{key}"] = prefs.get(key, _ADV_DEFAULTS[key])
 
 
 def _logout():
@@ -298,8 +303,8 @@ if isinstance(prefs, str):
 if not isinstance(prefs, dict):
     prefs = {}
 st.session_state.preferences = prefs
-default_model = prefs.get("model", "Auto (recommended)")
-default_temp = prefs.get("temperature", 0.7)
+default_model = prefs.get("model", _ADV_DEFAULTS["model"])
+default_temp = prefs.get("temperature", _ADV_DEFAULTS["temperature"])
 
 # --- Sidebar: user header + navigation ---
 with st.sidebar:
@@ -403,12 +408,13 @@ if st.session_state.page == "Chat":
         selected_model = None
     temperature = default_temp
 
-    # Advanced settings stored in session (set on Settings page)
-    top_p = st.session_state.get("adv_top_p", 0.9)
-    num_predict = st.session_state.get("adv_num_predict", 1024)
-    system_prompt = st.session_state.get("adv_system_prompt", "")
-    use_rag = st.session_state.get("adv_use_rag", False)
-    use_tools = st.session_state.get("adv_use_tools", False)
+    # Advanced settings — read from persisted preferences (not widget keys,
+    # which Streamlit clears when the Settings page isn't rendered)
+    top_p = prefs.get("top_p", _ADV_DEFAULTS["top_p"])
+    num_predict = prefs.get("num_predict", _ADV_DEFAULTS["num_predict"])
+    system_prompt = prefs.get("system_prompt", _ADV_DEFAULTS["system_prompt"])
+    use_rag = prefs.get("use_rag", _ADV_DEFAULTS["use_rag"])
+    use_tools = prefs.get("use_tools", _ADV_DEFAULTS["use_tools"])
 
     # Welcome screen
     if not st.session_state.messages:
@@ -432,38 +438,6 @@ if st.session_state.page == "Chat":
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
-
-    # File upload — attach documents to ground the conversation
-    uploaded_files = st.file_uploader(
-        "Attach documents",
-        type=_ALL_TYPES,
-        accept_multiple_files=True,
-        key="chat_file_upload",
-        label_visibility="collapsed",
-    )
-    if uploaded_files:
-        ingested = st.session_state.get("_ingested_files", set())
-        for uf in uploaded_files:
-            if uf.name in ingested:
-                continue
-            with st.spinner(f"Processing {uf.name}..."):
-                try:
-                    resp = httpx.post(
-                        f"{GATEWAY_URL}/ingest",
-                        files={"file": (uf.name, uf.getvalue())},
-                        timeout=120.0,
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    ingested.add(uf.name)
-                    st.session_state["_ingested_files"] = ingested
-                    st.session_state["adv_use_rag"] = True
-                    use_rag = True
-                    st.success(f"{data['source']} ({data['num_chunks']} chunks)")
-                except Exception as e:
-                    st.error(f"Failed to process {uf.name}: {e}")
-        if ingested:
-            st.caption("RAG enabled — ask questions about your documents")
 
     # Chat input
     if prompt := st.chat_input("Type your message..."):
@@ -565,21 +539,21 @@ elif st.session_state.page == "Settings":
 
     st.slider(
         "Max response length", 64, 4096,
-        st.session_state.get("adv_num_predict", 1024), 64,
+        prefs.get("num_predict", _ADV_DEFAULTS["num_predict"]), 64,
         key="adv_num_predict",
         on_change=_save_preferences,
         help="Limit how long the response can be (in tokens, ~0.75 words each)",
     )
     st.slider(
         "Top P", 0.0, 1.0,
-        st.session_state.get("adv_top_p", 0.9), 0.05,
+        prefs.get("top_p", _ADV_DEFAULTS["top_p"]), 0.05,
         key="adv_top_p",
         on_change=_save_preferences,
         help="Controls diversity. Lower = more focused, higher = more creative",
     )
     st.text_area(
         "System prompt",
-        value=st.session_state.get("adv_system_prompt", ""),
+        value=prefs.get("system_prompt", _ADV_DEFAULTS["system_prompt"]),
         height=80,
         key="adv_system_prompt",
         on_change=_save_preferences,
@@ -588,14 +562,14 @@ elif st.session_state.page == "Settings":
     )
     st.toggle(
         "Use documents (RAG)",
-        value=st.session_state.get("adv_use_rag", False),
+        value=prefs.get("use_rag", _ADV_DEFAULTS["use_rag"]),
         key="adv_use_rag",
         on_change=_save_preferences,
         help="Ground answers in your uploaded documents",
     )
     st.toggle(
         "Use tools",
-        value=st.session_state.get("adv_use_tools", False),
+        value=prefs.get("use_tools", _ADV_DEFAULTS["use_tools"]),
         key="adv_use_tools",
         on_change=_save_preferences,
         help="Let the model use tools (calculator, web search, current time). Requires a tool-capable model (llama3.1, qwen3.5).",
