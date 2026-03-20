@@ -152,8 +152,9 @@ def _logout():
     st.session_state.messages = []
     st.session_state.conversation_id = None
     st.session_state.page = "Chat"
-    # Clear URL param so reload doesn't auto-login
-    st.query_params.clear()
+    # Clear only the uid param so reload doesn't auto-login
+    if "uid" in st.query_params:
+        del st.query_params["uid"]
     st.rerun()
 
 
@@ -181,6 +182,9 @@ if "models" not in st.session_state:
 # --- Session restore from URL params (survives browser reload) ---
 if not st.session_state.user_id:
     saved_uid = st.query_params.get("uid")
+    # Normalize to single string (query params can be a list if duplicated)
+    if isinstance(saved_uid, list):
+        saved_uid = saved_uid[0] if saved_uid else None
     if saved_uid:
         try:
             resp = httpx.get(
@@ -195,8 +199,12 @@ if not st.session_state.user_id:
                 st.session_state.is_admin = data.get("is_admin", False)
                 st.session_state.preferences = data.get("preferences", {})
                 _load_preferences(st.session_state.preferences)
+            else:
+                # Clear stale uid so we don't retry on every rerun
+                del st.query_params["uid"]
         except Exception:
-            pass  # Fall through to login screen
+            # Clear stale uid and fall through to login screen
+            st.query_params.pop("uid", None)
 
 
 # ============================================================
