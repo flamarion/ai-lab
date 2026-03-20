@@ -87,7 +87,7 @@ class OllamaClient:
             # Add the assistant's tool_calls message to history (verbatim)
             messages.append(msg)
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             for tc in tool_calls:
                 fn_name = tc["function"]["name"]
                 fn_args = tc["function"]["arguments"]

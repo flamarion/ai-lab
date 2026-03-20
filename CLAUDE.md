@@ -131,7 +131,8 @@ User → Streamlit (chat-ui:8501) → FastAPI (llm-gateway:8000) → Ollama (GPU
 - `GET /auth/users` — list usernames (for login dropdown, no IDs exposed)
 - `POST /auth/register` — create user (username + PIN, first user is auto-admin)
 - `POST /auth/login` — authenticate (returns user_id, is_admin, preferences)
-- `PATCH /auth/preferences` — update user preferences (model, temperature)
+- `GET /auth/session` — restore session from user_id (browser reload support, no PIN required)
+- `PATCH /auth/preferences` — update user preferences (model, temperature, advanced settings)
 - `POST /auth/change-pin` — change own PIN (requires current PIN)
 
 **Admin (requires admin user):**

@@ -199,8 +199,8 @@ Python 3.12, FastAPI, Streamlit, httpx, Ollama, Postgres 16 (asyncpg), Qdrant, b
 
 See [ROADMAP.md](ROADMAP.md) for the full learning path and phase details.
 
-**Completed:** Phase 1 (Chat Platform) → Phase 2 (Homelab Deploy) → Phase 3 (Data Layer) → Phase 3.5 (Consolidation) → Phase 4 (RAG) → Phase 4.5 (Auth & UX) → Phase 5 (Evaluation)
+**Completed:** Phase 1 (Chat Platform) → Phase 2 (Homelab Deploy) → Phase 3 (Data Layer) → Phase 3.5 (Consolidation) → Phase 4 (RAG) → Phase 4.5 (Auth & UX) → Phase 5 (Evaluation) → Phase 6 (Tool Use)
 
-**Next:** Child guardrails or Phase 6 (Tool Use & Function Calling)
+**Next:** Phase 7 (Agents) or child guardrails
 
 **Future:** Agents → Multi-agent systems
