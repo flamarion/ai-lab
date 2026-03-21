@@ -29,7 +29,7 @@ End goal: An agentic system running on homelab infrastructure.
 │  ├── qwen3.5:latest           │  │  └── messages          │
 │  └── llama3:latest            │  │                        │
 │                               │  │  Qdrant :6333  (P4)    │
-│  RTX 3060 12GB + GTX 1650 4GB│  │                        │
+│  2x RTX 3060 12GB (24GB)     │  │                        │
 │  Flash attn, q8 KV, 16k ctx  │  │                        │
 └───────────────────────────────┘  └────────────────────────┘
 ```

@@ -34,7 +34,7 @@ User → nginx (:80) → Streamlit (chat-ui:8501) → FastAPI (llm-gateway:8000)
 
 | Host | Role | Details |
 |------|------|---------|
-| **GPU PC** (mato, 192.168.1.178) | Inference | Ollama :11434 — mistral:7b, qwen3.5, llama3, nomic-embed-text-v2-moe. RTX 3060 12GB + GTX 1650 4GB |
+| **GPU PC** (mato, 192.168.1.178) | Inference | Ollama :11434 — mistral:7b, qwen3.5, llama3, nomic-embed-text-v2-moe. 2x RTX 3060 12GB (24GB total) |
 | **ai-app VM** (Proxmox) | Application | nginx + gateway + chat UI via Docker |
 | **ai-data VM** (192.168.1.202, Proxmox) | Data | Postgres :5432 + Qdrant :6333 via Docker |
 | **Ceph cluster** | Storage | 4TB — RBD block + S3 via RadosGW (available, not yet used) |
