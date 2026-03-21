@@ -17,13 +17,13 @@ Personal AI engineering lab for learning end-to-end AI system design. The goal i
 ## Infrastructure
 
 - **GPU PC** (192.168.1.178, hostname: mato): Ollama on port 11434 — serves mistral:7b, qwen3.5:latest, llama3:latest. 2x RTX 3060 12GB (24GB total).
-- **ai-app VM** (Proxmox): Runs app services via Docker — gateway, chat UI, W&B Weave
+- **ai-app VM** (192.168.1.201, Proxmox): Runs app services via Docker — gateway, chat UI, W&B Weave
 - **ai-data VM** (192.168.1.202, Proxmox): Data services — Postgres (conversation persistence), Qdrant (vector search for RAG)
 - **Ceph cluster**: 4TB — RBD block storage + S3 via RadosGW
 
 ### Network topology
 ```
-ai-app VM (Proxmox)  ---- LAN ---->  GPU PC (192.168.1.178)
+ai-app VM (192.168.1.201)  - LAN ->  GPU PC (192.168.1.178)
   ├── chat-ui:8501                     └── Ollama:11434
   └── llm-gateway:8000
          |
