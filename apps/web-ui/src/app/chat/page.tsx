@@ -1,0 +1,239 @@
+"use client";
+
+import { useAuth } from "@/lib/auth-context";
+import { chat as chatApi, conversations as convApi, type ChatMessage as CM, type ToolUsed } from "@/lib/api";
+import ChatSidebar from "@/components/chat-sidebar";
+import ChatMessageComponent from "@/components/chat-message";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { Menu, Send, Zap } from "lucide-react";
+
+interface Message {
+  role: "user" | "assistant";
+  content: string;
+  toolsUsed?: ToolUsed[];
+}
+
+export default function ChatPage() {
+  const { user, loading } = useAuth();
+  const router = useRouter();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [models, setModels] = useState<string[]>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Redirect if not logged in
+  useEffect(() => {
+    if (!loading && !user) router.replace("/login");
+  }, [user, loading, router]);
+
+  // Load models
+  useEffect(() => {
+    chatApi.models().then((d) => setModels(d.models)).catch(() => {});
+  }, []);
+
+  // Load conversation when selected
+  useEffect(() => {
+    if (!conversationId) return;
+    convApi.get(conversationId).then((data) => {
+      setMessages(
+        data.messages.map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        }))
+      );
+    }).catch(() => {});
+  }, [conversationId]);
+
+  // Auto-scroll to bottom
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages, sending]);
+
+  // Auto-resize textarea
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    e.target.style.height = "auto";
+    e.target.style.height = Math.min(e.target.scrollHeight, 200) + "px";
+  };
+
+  const prefs = (user?.preferences || {}) as Record<string, unknown>;
+
+  const handleSend = async () => {
+    if (!input.trim() || sending || !user) return;
+    const msg = input.trim();
+    setInput("");
+    if (inputRef.current) inputRef.current.style.height = "auto";
+
+    setMessages((prev) => [...prev, { role: "user", content: msg }]);
+    setSending(true);
+
+    try {
+      // Build model selection
+      const savedModel = prefs.model as string | undefined;
+      const model = savedModel && savedModel !== "Auto (recommended)" ? savedModel : undefined;
+
+      const result = await chatApi.send({
+        message: msg,
+        model,
+        temperature: (prefs.temperature as number) ?? 0.7,
+        top_p: (prefs.top_p as number) ?? 0.9,
+        num_predict: (prefs.num_predict as number) ?? 1024,
+        system_prompt: (prefs.system_prompt as string) || undefined,
+        use_rag: (prefs.use_rag as boolean) ?? false,
+        use_tools: (prefs.use_tools as boolean) ?? false,
+        user_id: user.user_id,
+        conversation_id: conversationId || undefined,
+        history: conversationId ? undefined : messages.map((m) => ({ role: m.role, content: m.content })),
+      });
+
+      setConversationId(result.conversation_id);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: result.response,
+          toolsUsed: result.tools_used.length > 0 ? result.tools_used : undefined,
+        },
+      ]);
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `Error: ${err instanceof Error ? err.message : "Something went wrong"}` },
+      ]);
+    } finally {
+      setSending(false);
+      inputRef.current?.focus();
+    }
+  };
+
+  const handleNewChat = (id: string | null) => {
+    if (id) {
+      setConversationId(id);
+    } else {
+      setConversationId(null);
+      setMessages([]);
+    }
+  };
+
+  const useTools = (prefs.use_tools as boolean) ?? false;
+
+  if (loading || !user) return null;
+
+  return (
+    <div className="flex h-screen">
+      <ChatSidebar
+        currentId={conversationId || undefined}
+        onSelect={handleNewChat}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
+
+      {/* Main chat area */}
+      <main className="flex-1 flex flex-col min-w-0">
+        {/* Top bar */}
+        <header className="flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)]">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="lg:hidden p-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+          >
+            <Menu size={20} />
+          </button>
+          <h1
+            className="text-lg"
+            style={{ fontFamily: "var(--font-display)" }}
+          >
+            AI Lab
+          </h1>
+          {useTools && (
+            <span className="flex items-center gap-1 text-xs text-[var(--color-accent)] bg-[var(--color-accent-soft)] px-2 py-0.5 rounded-full">
+              <Zap size={10} />
+              Tools
+            </span>
+          )}
+          <div className="flex-1" />
+          <span className="text-xs text-[var(--color-text-muted)]">
+            {prefs.model as string || "Auto"}
+          </span>
+        </header>
+
+        {/* Messages */}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto">
+          {messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center px-4">
+              <div className="text-6xl mb-4">🧪</div>
+              <h2
+                className="text-2xl mb-2"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                Hey {user.username}!
+              </h2>
+              <p className="text-[var(--color-text-muted)] text-sm max-w-md">
+                Your personal AI assistant — powered by local models running on your homelab.
+              </p>
+              <div className="flex flex-wrap justify-center gap-2 mt-6">
+                {["Ask me anything", "Help me write", "Explain a concept", "Debug some code"].map((hint) => (
+                  <button
+                    key={hint}
+                    onClick={() => { setInput(hint); inputRef.current?.focus(); }}
+                    className="px-4 py-2 rounded-xl text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-light)] hover:text-[var(--color-text)] transition-colors"
+                  >
+                    {hint}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+              {messages.map((m, i) => (
+                <ChatMessageComponent
+                  key={i}
+                  role={m.role}
+                  content={m.content}
+                  toolsUsed={m.toolsUsed}
+                />
+              ))}
+              {sending && (
+                <ChatMessageComponent role="assistant" content="" isStreaming />
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Input */}
+        <div className="border-t border-[var(--color-border)] p-4">
+          <div className="max-w-3xl mx-auto relative">
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={handleInputChange}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              placeholder="Type your message..."
+              rows={1}
+              className="w-full resize-none bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl px-4 py-3 pr-12 text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-border-light)] transition-colors"
+            />
+            <button
+              onClick={handleSend}
+              disabled={!input.trim() || sending}
+              className="absolute right-3 bottom-3 p-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] disabled:opacity-30 hover:bg-[var(--color-accent-hover)] transition-colors"
+            >
+              <Send size={16} />
+            </button>
+          </div>
+          <p className="text-center text-xs text-[var(--color-text-muted)] mt-2">
+            AI can make mistakes. Verify important information.
+          </p>
+        </div>
+      </main>
+    </div>
+  );
+}

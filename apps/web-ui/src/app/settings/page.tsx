@@ -1,0 +1,264 @@
+"use client";
+
+import { useAuth } from "@/lib/auth-context";
+import { chat as chatApi, documents as docsApi, auth as authApi } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { ArrowLeft, Upload, Trash2, FileText } from "lucide-react";
+import Link from "next/link";
+
+export default function SettingsPage() {
+  const { user, loading, updatePreferences } = useAuth();
+  const router = useRouter();
+  const [models, setModels] = useState<string[]>([]);
+  const [docs, setDocs] = useState<{ id: string; source: string; num_chunks: number }[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [pinSection, setPinSection] = useState({ current: "", new_pin: "", message: "" });
+
+  // Local form state initialized from preferences
+  const prefs = (user?.preferences || {}) as Record<string, unknown>;
+  const [model, setModel] = useState((prefs.model as string) || "Auto (recommended)");
+  const [temperature, setTemperature] = useState((prefs.temperature as number) ?? 0.7);
+  const [topP, setTopP] = useState((prefs.top_p as number) ?? 0.9);
+  const [numPredict, setNumPredict] = useState((prefs.num_predict as number) ?? 1024);
+  const [systemPrompt, setSystemPrompt] = useState((prefs.system_prompt as string) || "");
+  const [useRag, setUseRag] = useState((prefs.use_rag as boolean) ?? false);
+  const [useTools, setUseTools] = useState((prefs.use_tools as boolean) ?? false);
+
+  useEffect(() => {
+    if (!loading && !user) router.replace("/login");
+  }, [user, loading, router]);
+
+  useEffect(() => {
+    chatApi.models().then((d) => setModels(d.models)).catch(() => {});
+    docsApi.list().then((d) => setDocs(d.documents)).catch(() => {});
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    await updatePreferences({
+      model, temperature, top_p: topP, num_predict: numPredict,
+      system_prompt: systemPrompt, use_rag: useRag, use_tools: useTools,
+    });
+    setSaving(false);
+  };
+
+  const handleUpload = async (files: FileList) => {
+    for (const file of Array.from(files)) {
+      try {
+        await docsApi.ingest(file);
+        const updated = await docsApi.list();
+        setDocs(updated.documents);
+      } catch {
+        alert(`Failed to upload ${file.name}`);
+      }
+    }
+  };
+
+  const handleDeleteDoc = async (id: string) => {
+    await docsApi.delete(id).catch(() => {});
+    setDocs((prev) => prev.filter((d) => d.id !== id));
+  };
+
+  const handleChangePin = async () => {
+    if (!user || pinSection.new_pin.length < 4) {
+      setPinSection((s) => ({ ...s, message: "PIN must be at least 4 digits" }));
+      return;
+    }
+    try {
+      await authApi.changePin(user.user_id, pinSection.current, pinSection.new_pin);
+      setPinSection({ current: "", new_pin: "", message: "PIN updated!" });
+    } catch (err) {
+      setPinSection((s) => ({ ...s, message: err instanceof Error ? err.message : "Failed" }));
+    }
+  };
+
+  if (loading || !user) return null;
+
+  return (
+    <div className="min-h-screen">
+      {/* Header */}
+      <header className="sticky top-0 z-10 bg-[var(--color-bg)]/80 backdrop-blur border-b border-[var(--color-border)] px-4 py-3">
+        <div className="max-w-2xl mx-auto flex items-center gap-3">
+          <Link href="/chat" className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+            <ArrowLeft size={20} />
+          </Link>
+          <h1 className="text-lg font-semibold">Settings</h1>
+          <div className="flex-1" />
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-4 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm font-medium hover:bg-[var(--color-accent-hover)] transition-colors disabled:opacity-50"
+          >
+            {saving ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </header>
+
+      <div className="max-w-2xl mx-auto px-4 py-8 space-y-8">
+        {/* Model */}
+        <Section title="Model">
+          <select
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            className="w-full px-4 py-3 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
+          >
+            <option>Auto (recommended)</option>
+            {models.map((m) => (
+              <option key={m}>{m}</option>
+            ))}
+          </select>
+          <p className="text-xs text-[var(--color-text-muted)] mt-1">
+            Auto routes code prompts to qwen3.5 and general prompts to mistral.
+          </p>
+        </Section>
+
+        {/* Temperature */}
+        <Section title="Temperature">
+          <div className="flex items-center gap-4">
+            <input
+              type="range"
+              min={0} max={1} step={0.1}
+              value={temperature}
+              onChange={(e) => setTemperature(parseFloat(e.target.value))}
+              className="flex-1 accent-[var(--color-accent)]"
+            />
+            <span className="text-sm font-mono w-8 text-center">{temperature}</span>
+          </div>
+          <p className="text-xs text-[var(--color-text-muted)] mt-1">
+            Higher = more creative, lower = more focused.
+          </p>
+        </Section>
+
+        {/* Advanced */}
+        <Section title="Advanced">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Top P</label>
+              <div className="flex items-center gap-4">
+                <input type="range" min={0} max={1} step={0.05} value={topP} onChange={(e) => setTopP(parseFloat(e.target.value))} className="flex-1 accent-[var(--color-accent)]" />
+                <span className="text-sm font-mono w-8 text-center">{topP}</span>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Max response length</label>
+              <div className="flex items-center gap-4">
+                <input type="range" min={64} max={4096} step={64} value={numPredict} onChange={(e) => setNumPredict(parseInt(e.target.value))} className="flex-1 accent-[var(--color-accent)]" />
+                <span className="text-sm font-mono w-12 text-center">{numPredict}</span>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm text-[var(--color-text-secondary)] mb-1">System prompt</label>
+              <textarea
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                rows={3}
+                className="w-full px-4 py-3 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm focus:outline-none focus:border-[var(--color-accent)] resize-none"
+                placeholder="e.g. You are a helpful cooking assistant"
+              />
+            </div>
+          </div>
+        </Section>
+
+        {/* Toggles */}
+        <Section title="Features">
+          <div className="space-y-3">
+            <Toggle label="Use documents (RAG)" description="Ground answers in your uploaded documents" checked={useRag} onChange={setUseRag} />
+            <Toggle label="Use tools" description="Calculator, unit converter, web fetch, MCP tools. Requires llama3.1, qwen3.5, or gemma3." checked={useTools} onChange={setUseTools} />
+          </div>
+        </Section>
+
+        {/* Documents */}
+        <Section title="Documents">
+          <p className="text-xs text-[var(--color-text-muted)] mb-3">
+            Upload documents for RAG. Supports PDF, DOCX, XLSX, text, code.
+          </p>
+          <label className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-dashed border-[var(--color-border)] text-sm text-[var(--color-text-secondary)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors cursor-pointer">
+            <Upload size={16} />
+            Upload files
+            <input
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => e.target.files && handleUpload(e.target.files)}
+            />
+          </label>
+          {docs.length > 0 && (
+            <div className="mt-3 space-y-1">
+              {docs.map((d) => (
+                <div key={d.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-bg-secondary)] text-sm">
+                  <FileText size={14} className="text-[var(--color-text-muted)]" />
+                  <span className="flex-1 truncate">{d.source}</span>
+                  <span className="text-xs text-[var(--color-text-muted)]">{d.num_chunks} chunks</span>
+                  <button onClick={() => handleDeleteDoc(d.id)} className="text-[var(--color-text-muted)] hover:text-[var(--color-error)]">
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Section>
+
+        {/* Change PIN */}
+        <Section title="Account">
+          <div className="space-y-3">
+            <input
+              type="password"
+              placeholder="Current PIN"
+              value={pinSection.current}
+              onChange={(e) => setPinSection((s) => ({ ...s, current: e.target.value, message: "" }))}
+              className="w-full px-4 py-3 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm focus:outline-none focus:border-[var(--color-accent)]"
+            />
+            <input
+              type="password"
+              placeholder="New PIN (4-8 digits)"
+              value={pinSection.new_pin}
+              onChange={(e) => setPinSection((s) => ({ ...s, new_pin: e.target.value, message: "" }))}
+              className="w-full px-4 py-3 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm focus:outline-none focus:border-[var(--color-accent)]"
+            />
+            <button onClick={handleChangePin} className="px-4 py-2 rounded-lg bg-[var(--color-bg-hover)] text-sm hover:bg-[var(--color-bg-tertiary)] transition-colors">
+              Update PIN
+            </button>
+            {pinSection.message && (
+              <p className={`text-sm ${pinSection.message.includes("updated") ? "text-[var(--color-success)]" : "text-[var(--color-error)]"}`}>
+                {pinSection.message}
+              </p>
+            )}
+          </div>
+        </Section>
+      </div>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-3">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function Toggle({ label, description, checked, onChange }: {
+  label: string; description: string; checked: boolean; onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between py-2 cursor-pointer group">
+      <div>
+        <div className="text-sm font-medium">{label}</div>
+        <div className="text-xs text-[var(--color-text-muted)]">{description}</div>
+      </div>
+      <div
+        onClick={() => onChange(!checked)}
+        className={`w-10 h-6 rounded-full transition-colors relative ${
+          checked ? "bg-[var(--color-accent)]" : "bg-[var(--color-border)]"
+        }`}
+      >
+        <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
+          checked ? "translate-x-5" : "translate-x-1"
+        }`} />
+      </div>
+    </label>
+  );
+}
