@@ -577,7 +577,14 @@ async def chat(request: ChatRequest):
         logger.info("Model: %s (user selected)", model)
     else:
         model, reason = router.select_model(request.message)
-        logger.info("Model: %s (auto — %s)", model, reason)
+        # Override to a tool-capable model when tools are enabled.
+        # mistral:7b and llama3 silently ignore the tools parameter.
+        if request.use_tools and model in (settings.ROUTE_DEFAULT_MODEL,) and settings.ROUTE_TOOLS_MODEL:
+            logger.info("Model: %s → %s (auto — tools enabled, %s not tool-capable)",
+                        model, settings.ROUTE_TOOLS_MODEL, model)
+            model = settings.ROUTE_TOOLS_MODEL
+        else:
+            logger.info("Model: %s (auto — %s)", model, reason)
 
     conversation_id = request.conversation_id or str(uuid.uuid4())
 
