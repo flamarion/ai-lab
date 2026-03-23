@@ -274,6 +274,38 @@ Phase 6 tool-use flow:
 
 ---
 
+### Phase 6.5 — MCP (Model Context Protocol) ✅
+**What you built:** MCP client in the gateway, hybrid tool architecture (local + MCP), configurable server connections, admin UI, secrets store, Cursor-style config import
+
+```
+Phase 6.5 hybrid tool architecture:
+
+  Model → Gateway → MCP Client Manager → mcp-server-fetch (URL reader)
+                                        → wandb, kubernetes, etc. via config
+                  → tools.py (calculator, current_time, unit_convert)
+
+  Config persisted in Postgres (survives container restarts)
+  Admin UI: add/edit/remove servers, Cursor-style JSON import
+  Secrets: ${SECRET_NAME} inline, ${file:SECRET_NAME} for kubeconfig/certs
+```
+
+**What you learned:**
+- MCP is "USB for AI tools" — a standard protocol for tool discovery and execution. Any MCP server works with any MCP client (Claude Code, Cursor, etc.)
+- Hybrid architecture: MCP for general-purpose tools (web, GitHub, databases), local tools.py for custom/homelab-specific functions
+- Cursor-style config format: same JSON used in Cursor, Claude Desktop, VS Code — paste and import
+- Three transports: stdio (subprocess), HTTP (streamable), SSE (legacy). Gateway tries all automatically
+- Secrets store: API keys in Postgres, ${SECRET_NAME} for inline substitution, ${file:SECRET_NAME} for file-based secrets (kubeconfig, certificates)
+- MCP config persistence: stored in Postgres, survives container restarts. JSON file is fallback only
+- Why standards exist: building custom tools first (Phase 6) made the value of MCP obvious
+
+**Key files:**
+- `services/llm-gateway/src/mcp_client.py` — MCP client manager (connect, discover, route, secret substitution)
+- `services/llm-gateway/src/tools.py` — local tools (calculator, current_time, unit_convert)
+- `services/llm-gateway/src/main.py` — MCP + secrets CRUD endpoints
+- `apps/web-ui/src/app/admin/page.tsx` — admin UI for servers, secrets, users
+
+---
+
 ### Phase 7 — Agents
 **What you'll build:** Orchestration loop — plan → act → observe → repeat
 **What you'll learn:**
@@ -281,37 +313,6 @@ Phase 6 tool-use flow:
 - Memory: short-term (conversation) vs long-term (persisted)
 - Planning and reasoning strategies
 - When to stop: exit conditions and guardrails
-
----
-
-### Phase 6.5 — MCP (Model Context Protocol) ✅
-**What you built:** MCP client in the gateway, hybrid tool architecture (local + MCP), configurable server connections
-
-```
-Phase 6.5 hybrid tool architecture:
-
-  Model → Gateway → MCP Client Manager → mcp-server-fetch (URL reader)
-                                        → ... more servers via config
-
-                  → tools.py (calculator, current_time)
-
-  Configured via mcp_servers.json (same format as Claude Desktop)
-```
-
-**What you learned:**
-- MCP is "USB for AI tools" — a standard protocol for tool discovery and execution. Any MCP server works with any MCP client (Claude Code, Cursor, etc.)
-- Hybrid architecture: MCP for general-purpose tools (web, GitHub, databases), local tools.py for custom/homelab-specific functions
-- `mcp_servers.json` config: same format as Claude Desktop — add/remove servers without code changes
-- MCP stdio transport: the client spawns the server as a subprocess and communicates via stdin/stdout
-- Tool schema translation: MCP tools auto-convert to Ollama-compatible format
-- Why standards exist: building custom tools first (Phase 6) made the value of MCP obvious
-- Adding a new MCP server is config, not code. Adding a custom tool is still just a function + schema in tools.py
-
-**Key files:**
-- `services/llm-gateway/src/mcp_client.py` — MCP client manager (connects to servers, discovers tools, routes calls)
-- `services/llm-gateway/mcp_servers.json` — server config (same format as Claude Desktop)
-- `services/llm-gateway/src/tools.py` — local tools (calculator, current_time)
-- `services/llm-gateway/src/ollama_client.py` — merges MCP + local tools, routes calls to the right place
 
 ---
 

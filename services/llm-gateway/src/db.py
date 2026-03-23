@@ -388,3 +388,26 @@ async def delete_secret(key: str) -> bool:
     pool = _pool_or_raise()
     result = await pool.execute("DELETE FROM secrets WHERE key = $1", key)
     return result == "DELETE 1"
+
+
+# --- MCP Config ---
+
+
+async def get_mcp_config() -> dict:
+    """Return the persisted MCP server config from the DB."""
+    pool = _pool_or_raise()
+    row = await pool.fetchrow("SELECT config FROM mcp_config WHERE id = 1")
+    if row and row["config"]:
+        cfg = row["config"]
+        return cfg if isinstance(cfg, dict) else json.loads(cfg)
+    return {}
+
+
+async def save_mcp_config(config: dict) -> None:
+    """Persist the full MCP server config to the DB."""
+    pool = _pool_or_raise()
+    await pool.execute(
+        "INSERT INTO mcp_config (id, config, updated_at) VALUES (1, $1::jsonb, now()) "
+        "ON CONFLICT (id) DO UPDATE SET config = $1::jsonb, updated_at = now()",
+        json.dumps(config),
+    )

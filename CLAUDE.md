@@ -179,6 +179,7 @@ Current migrations:
 - `005_user_delete_cascade.sql` — ON DELETE SET NULL for conversations.user_id FK
 - `006_user_child_flag.sql` — is_child column on users (for future guardrails)
 - `007_secrets.sql` — secrets table (key-value store for MCP credentials)
+- `008_mcp_config.sql` — mcp_config table (persists MCP server config across container restarts)
 
 Two compose files, one per VM:
 - `infra/docker/docker-compose.yml` — ai-app VM (nginx + gateway + chat UI)
