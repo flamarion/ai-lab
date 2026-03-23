@@ -1,6 +1,7 @@
 FROM node:22-slim AS builder
 
 WORKDIR /app
+RUN npm install -g npm@11.12.0
 
 COPY package.json package-lock.json ./
 RUN npm ci
