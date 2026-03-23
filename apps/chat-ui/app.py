@@ -145,6 +145,9 @@ def _load_preferences(prefs: dict):
     """Apply saved preferences to session state so all pages see them."""
     if not isinstance(prefs, dict):
         return
+    # Restore model/temperature so _save_preferences doesn't reset them
+    st.session_state["pref_model"] = prefs.get("model", _ADV_DEFAULTS["model"])
+    st.session_state["pref_temperature"] = prefs.get("temperature", _ADV_DEFAULTS["temperature"])
     for key in ("top_p", "num_predict", "system_prompt", "use_rag", "use_tools"):
         st.session_state[f"adv_{key}"] = prefs.get(key, _ADV_DEFAULTS[key])
 
@@ -456,10 +459,8 @@ if st.session_state.page == "Chat":
                     }
                     if selected_model:
                         payload["model"] = selected_model
-                    if top_p != 0.9:
-                        payload["top_p"] = top_p
-                    if num_predict != 1024:
-                        payload["num_predict"] = num_predict
+                    payload["top_p"] = top_p
+                    payload["num_predict"] = num_predict
                     if system_prompt.strip():
                         payload["system_prompt"] = system_prompt
                     if use_rag:
@@ -596,11 +597,15 @@ elif st.session_state.page == "Settings":
                             detail = srv.get("url", "")
                         else:
                             detail = f"{srv.get('command', '')} {' '.join(str(a) for a in srv.get('args', []))}"
-                        col1, col2 = st.columns([4, 1])
+                        col1, col2, col3 = st.columns([4, 1, 1])
                         with col1:
                             st.markdown(f"**{srv['name']}** — {status} ({tool_list})")
                             st.caption(f"`{transport}: {detail}`")
                         with col2:
+                            if st.button("Edit", key=f"mcp_ed_{srv['name']}", use_container_width=True):
+                                st.session_state["_mcp_edit_name"] = srv["name"]
+                                st.rerun()
+                        with col3:
                             if st.button("Remove", key=f"mcp_rm_{srv['name']}", use_container_width=True):
                                 try:
                                     httpx.delete(
@@ -611,6 +616,67 @@ elif st.session_state.page == "Settings":
                                     st.rerun()
                                 except Exception as e:
                                     st.error(str(e))
+
+                    # Edit panel — shown when Edit is clicked
+                    edit_name = st.session_state.get("_mcp_edit_name")
+                    if edit_name:
+                        st.divider()
+                        st.markdown(f"**Editing: {edit_name}**")
+                        # Fetch current config
+                        config_loaded = False
+                        try:
+                            cfg_resp = httpx.get(
+                                f"{GATEWAY_URL}/mcp/servers/{edit_name}/config",
+                                params={"admin_user_id": st.session_state.user_id},
+                                timeout=5.0,
+                            )
+                            if cfg_resp.status_code == 200:
+                                current_config = json.dumps(cfg_resp.json().get("config", {}), indent=2)
+                                config_loaded = True
+                            else:
+                                current_config = "{}"
+                                st.error("Could not load server config — save disabled")
+                        except Exception as e:
+                            current_config = "{}"
+                            st.error(f"Could not load server config: {e}")
+                        edit_json = st.text_area(
+                            "Server config (JSON)",
+                            value=current_config,
+                            height=150,
+                            key=f"mcp_edit_json_{edit_name}",
+                        )
+                        ecol1, ecol2 = st.columns(2)
+                        with ecol1:
+                            if st.button("Save & reconnect", use_container_width=True, disabled=not config_loaded):
+                                try:
+                                    config = json.loads(edit_json)
+                                    resp = httpx.post(
+                                        f"{GATEWAY_URL}/mcp/servers",
+                                        json={
+                                            "admin_user_id": st.session_state.user_id,
+                                            "name": edit_name,
+                                            "config": config,
+                                        },
+                                        timeout=30.0,
+                                    )
+                                    if resp.status_code == 200:
+                                        data = resp.json()
+                                        if data.get("connected"):
+                                            st.success(f"Updated '{edit_name}' — connected, {len(data.get('tools', []))} tool(s)")
+                                        else:
+                                            st.warning(f"Updated '{edit_name}' but connection failed")
+                                        del st.session_state["_mcp_edit_name"]
+                                        st.rerun()
+                                    else:
+                                        st.error(resp.json().get("detail", "Failed"))
+                                except json.JSONDecodeError as e:
+                                    st.error(f"Invalid JSON: {e}")
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
+                        with ecol2:
+                            if st.button("Cancel", use_container_width=True):
+                                del st.session_state["_mcp_edit_name"]
+                                st.rerun()
                 else:
                     st.info("No MCP servers configured")
         except Exception:

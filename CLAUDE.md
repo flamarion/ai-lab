@@ -145,9 +145,15 @@ User → Streamlit (chat-ui:8501) → FastAPI (llm-gateway:8000) → Ollama (GPU
 
 **MCP (admin-only — these endpoints can execute commands):**
 - `GET /mcp/servers` — list configured MCP servers with connection status and tools
+- `GET /mcp/servers/{name}/config` — get raw JSON config for a server (for editing)
 - `POST /mcp/servers` — add an MCP server to config and reconnect
 - `DELETE /mcp/servers/{name}` — remove an MCP server and reconnect
 - `POST /mcp/restart` — reconnect to all configured MCP servers
+
+**Secrets (admin-only):**
+- `GET /secrets` — list secret keys (values are never exposed)
+- `POST /secrets` — create or update a secret
+- `DELETE /secrets/{key}` — delete a secret
 
 **RAG:**
 - `POST /ingest` — upload a document for RAG (file upload, returns document_id + chunk count)
@@ -172,6 +178,7 @@ Current migrations:
 - `004_user_admin.sql` — is_admin column on users
 - `005_user_delete_cascade.sql` — ON DELETE SET NULL for conversations.user_id FK
 - `006_user_child_flag.sql` — is_child column on users (for future guardrails)
+- `007_secrets.sql` — secrets table (key-value store for MCP credentials)
 
 Two compose files, one per VM:
 - `infra/docker/docker-compose.yml` — ai-app VM (nginx + gateway + chat UI)
@@ -214,7 +221,7 @@ Two runners:
 When `use_tools=True` in a chat request, the gateway sends tool schemas to Ollama alongside the messages. If the model returns `tool_calls`, the gateway executes them and feeds results back — repeating until the model produces a final text response (up to 5 rounds).
 
 Tools come from two sources:
-- **Local tools** (`services/llm-gateway/src/tools.py`): `calculator` (safe math eval), `current_time` (UTC date/time). Adding a new tool: write a function + schema in `TOOL_REGISTRY`. See the docstring in `tools.py` for a full guide.
+- **Local tools** (`services/llm-gateway/src/tools.py`): `calculator` (safe math eval), `current_time` (UTC date/time), `unit_convert` (length, weight, volume, temperature). Adding a new tool: write a function + schema in `TOOL_REGISTRY`. See the docstring in `tools.py` for a full guide.
 - **MCP servers** (`services/llm-gateway/mcp_servers.json`): community tool servers connected via the Model Context Protocol. Default: `mcp-server-fetch` (reads URLs as markdown). Add more by editing the JSON config — same format as Claude Desktop.
 
 The gateway merges both tool lists and routes calls to the right place (MCP or local).

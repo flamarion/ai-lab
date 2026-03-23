@@ -52,7 +52,7 @@ _CONFIG_PATH = Path(
 )
 
 # Timeout for connecting to each MCP server (seconds)
-_CONNECT_TIMEOUT = 30
+_CONNECT_TIMEOUT = 60
 
 # Minimal env vars passed to MCP subprocesses (avoid leaking secrets)
 _ENV_ALLOWLIST = {"PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR"}
@@ -92,16 +92,22 @@ class MCPClientManager:
         await self._load_secrets()
 
         async with self._lock:
-            for name, server_config in config.items():
+            # Connect to all servers in parallel (don't let one slow server
+            # block the others — total startup time = slowest server, not sum)
+            async def _safe_connect(name: str, cfg: dict):
                 try:
                     await asyncio.wait_for(
-                        self._connect_server(name, server_config),
+                        self._connect_server(name, cfg),
                         timeout=_CONNECT_TIMEOUT,
                     )
                 except asyncio.TimeoutError:
                     logger.warning("MCP server '%s' timed out after %ds, skipping", name, _CONNECT_TIMEOUT)
                 except Exception as e:
                     logger.warning("Failed to connect to MCP server '%s': %s", name, e)
+
+            await asyncio.gather(*[
+                _safe_connect(name, cfg) for name, cfg in config.items()
+            ])
 
         if self._tools:
             logger.info(
