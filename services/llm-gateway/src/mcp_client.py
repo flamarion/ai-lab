@@ -52,7 +52,7 @@ _CONFIG_PATH = Path(
 )
 
 # Timeout for connecting to each MCP server (seconds)
-_CONNECT_TIMEOUT = 30
+_CONNECT_TIMEOUT = 60
 
 # Minimal env vars passed to MCP subprocesses (avoid leaking secrets)
 _ENV_ALLOWLIST = {"PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR"}

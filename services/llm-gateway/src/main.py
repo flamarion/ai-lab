@@ -481,6 +481,18 @@ async def list_mcp_servers():
     return {"servers": mcp_manager.list_servers()}
 
 
+@app.get("/mcp/servers/{name}/config")
+async def get_mcp_server_config(name: str, admin_user_id: str = Query(...)):
+    """Admin-only: get the raw JSON config for an MCP server."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(admin_user_id)
+    config = mcp_manager.get_config()
+    if name not in config:
+        raise HTTPException(status_code=404, detail=f"Server '{name}' not found")
+    return {"name": name, "config": config[name]}
+
+
 @app.post("/mcp/servers")
 async def add_mcp_server(request: AddMCPServerRequest):
     """Admin-only: add an MCP server to config and reconnect."""

@@ -596,11 +596,15 @@ elif st.session_state.page == "Settings":
                             detail = srv.get("url", "")
                         else:
                             detail = f"{srv.get('command', '')} {' '.join(str(a) for a in srv.get('args', []))}"
-                        col1, col2 = st.columns([4, 1])
+                        col1, col2, col3 = st.columns([4, 1, 1])
                         with col1:
                             st.markdown(f"**{srv['name']}** — {status} ({tool_list})")
                             st.caption(f"`{transport}: {detail}`")
                         with col2:
+                            if st.button("Edit", key=f"mcp_ed_{srv['name']}", use_container_width=True):
+                                st.session_state["_mcp_edit_name"] = srv["name"]
+                                st.rerun()
+                        with col3:
                             if st.button("Remove", key=f"mcp_rm_{srv['name']}", use_container_width=True):
                                 try:
                                     httpx.delete(
@@ -611,6 +615,60 @@ elif st.session_state.page == "Settings":
                                     st.rerun()
                                 except Exception as e:
                                     st.error(str(e))
+
+                    # Edit panel — shown when Edit is clicked
+                    edit_name = st.session_state.get("_mcp_edit_name")
+                    if edit_name:
+                        st.divider()
+                        st.markdown(f"**Editing: {edit_name}**")
+                        # Fetch current config
+                        try:
+                            cfg_resp = httpx.get(
+                                f"{GATEWAY_URL}/mcp/servers/{edit_name}/config",
+                                params={"admin_user_id": st.session_state.user_id},
+                                timeout=5.0,
+                            )
+                            current_config = json.dumps(cfg_resp.json().get("config", {}), indent=2) if cfg_resp.status_code == 200 else "{}"
+                        except Exception:
+                            current_config = "{}"
+                        edit_json = st.text_area(
+                            "Server config (JSON)",
+                            value=current_config,
+                            height=150,
+                            key="mcp_edit_json",
+                        )
+                        ecol1, ecol2 = st.columns(2)
+                        with ecol1:
+                            if st.button("Save & reconnect", use_container_width=True):
+                                try:
+                                    config = json.loads(edit_json)
+                                    resp = httpx.post(
+                                        f"{GATEWAY_URL}/mcp/servers",
+                                        json={
+                                            "admin_user_id": st.session_state.user_id,
+                                            "name": edit_name,
+                                            "config": config,
+                                        },
+                                        timeout=30.0,
+                                    )
+                                    if resp.status_code == 200:
+                                        data = resp.json()
+                                        if data.get("connected"):
+                                            st.success(f"Updated '{edit_name}' — connected, {len(data.get('tools', []))} tool(s)")
+                                        else:
+                                            st.warning(f"Updated '{edit_name}' but connection failed")
+                                        del st.session_state["_mcp_edit_name"]
+                                        st.rerun()
+                                    else:
+                                        st.error(resp.json().get("detail", "Failed"))
+                                except json.JSONDecodeError as e:
+                                    st.error(f"Invalid JSON: {e}")
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
+                        with ecol2:
+                            if st.button("Cancel", use_container_width=True):
+                                del st.session_state["_mcp_edit_name"]
+                                st.rerun()
                 else:
                     st.info("No MCP servers configured")
         except Exception:

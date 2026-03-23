@@ -2,12 +2,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Node.js for npm-based MCP servers (npx, community packages)
+# Node.js for npm-based MCP servers (npx) + uv for Python MCP servers (uvx)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates \
+    curl ca-certificates git \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir uv
 
 # Context is repo root (set in docker-compose.yml)
 COPY services/llm-gateway/requirements.txt .
