@@ -483,7 +483,12 @@ async def list_mcp_servers():
 
 @app.get("/mcp/servers/{name}/config")
 async def get_mcp_server_config(name: str, admin_user_id: str = Query(...)):
-    """Admin-only: get the raw JSON config for an MCP server."""
+    """Admin-only: get the raw JSON config for an MCP server.
+
+    Returns unredacted config (including env/headers) for editing.
+    Use ${SECRET_NAME} placeholders instead of literal secrets to keep
+    credentials in the secrets store rather than in the config file.
+    """
     if not db.is_available():
         raise HTTPException(status_code=503, detail="Database not available")
     await _require_admin(admin_user_id)

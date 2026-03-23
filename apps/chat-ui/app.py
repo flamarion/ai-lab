@@ -622,24 +622,31 @@ elif st.session_state.page == "Settings":
                         st.divider()
                         st.markdown(f"**Editing: {edit_name}**")
                         # Fetch current config
+                        config_loaded = False
                         try:
                             cfg_resp = httpx.get(
                                 f"{GATEWAY_URL}/mcp/servers/{edit_name}/config",
                                 params={"admin_user_id": st.session_state.user_id},
                                 timeout=5.0,
                             )
-                            current_config = json.dumps(cfg_resp.json().get("config", {}), indent=2) if cfg_resp.status_code == 200 else "{}"
-                        except Exception:
+                            if cfg_resp.status_code == 200:
+                                current_config = json.dumps(cfg_resp.json().get("config", {}), indent=2)
+                                config_loaded = True
+                            else:
+                                current_config = "{}"
+                                st.error("Could not load server config — save disabled")
+                        except Exception as e:
                             current_config = "{}"
+                            st.error(f"Could not load server config: {e}")
                         edit_json = st.text_area(
                             "Server config (JSON)",
                             value=current_config,
                             height=150,
-                            key="mcp_edit_json",
+                            key=f"mcp_edit_json_{edit_name}",
                         )
                         ecol1, ecol2 = st.columns(2)
                         with ecol1:
-                            if st.button("Save & reconnect", use_container_width=True):
+                            if st.button("Save & reconnect", use_container_width=True, disabled=not config_loaded):
                                 try:
                                     config = json.loads(edit_json)
                                     resp = httpx.post(
