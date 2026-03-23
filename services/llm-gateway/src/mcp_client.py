@@ -57,8 +57,12 @@ _CONNECT_TIMEOUT = 60
 # Minimal env vars passed to MCP subprocesses (avoid leaking secrets)
 _ENV_ALLOWLIST = {"PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR"}
 
-# Pattern for ${SECRET_NAME} substitution
+# Pattern for ${SECRET_NAME} substitution (inline value)
 _SECRET_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+# Pattern for ${file:SECRET_NAME} substitution (write to temp file, return path)
+_FILE_SECRET_PATTERN = re.compile(r"\$\{file:([A-Za-z_][A-Za-z0-9_]*)\}")
+# Directory for materialized secret files
+_SECRET_FILES_DIR = Path("/tmp/mcp_secret_files")
 
 
 class MCPClientManager:
@@ -255,14 +259,37 @@ class MCPClientManager:
     # --- Internal methods ---
 
     def _substitute_secrets(self, value: str) -> str:
-        """Replace ${SECRET_NAME} placeholders with values from the secrets store."""
-        def _replace(match):
+        """Replace ${SECRET_NAME} and ${file:SECRET_NAME} placeholders.
+
+        ${SECRET_NAME} — replaced with the secret value inline.
+        ${file:SECRET_NAME} — secret value written to a temp file, replaced
+        with the file path. Use for MCP servers that need file paths
+        (kubeconfig, certificates, SSH keys).
+        """
+        # First handle ${file:NAME} — write to temp file, substitute path
+        def _replace_file(match: re.Match) -> str:
+            key = match.group(1)
+            if key not in self._secrets:
+                logger.warning("File secret '${file:%s}' not found in secrets store", key)
+                return match.group(0)
+            _SECRET_FILES_DIR.mkdir(parents=True, exist_ok=True)
+            file_path = _SECRET_FILES_DIR / key
+            file_path.write_text(self._secrets[key])
+            file_path.chmod(0o600)  # restrict permissions
+            logger.info("Wrote secret '%s' to file %s", key, file_path)
+            return str(file_path)
+
+        value = _FILE_SECRET_PATTERN.sub(_replace_file, value)
+
+        # Then handle ${NAME} — inline substitution
+        def _replace_inline(match: re.Match) -> str:
             key = match.group(1)
             if key in self._secrets:
                 return self._secrets[key]
             logger.warning("Secret '${%s}' referenced but not found in secrets store", key)
-            return match.group(0)  # leave as-is if not found
-        return _SECRET_PATTERN.sub(_replace, value)
+            return match.group(0)
+
+        return _SECRET_PATTERN.sub(_replace_inline, value)
 
     def _substitute_dict(self, d: dict) -> dict:
         """Recursively substitute ${SECRET_NAME} in all string values of a dict."""
