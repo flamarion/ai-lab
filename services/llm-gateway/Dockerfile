@@ -2,6 +2,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Node.js for npm-based MCP servers (npx, community packages)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # Context is repo root (set in docker-compose.yml)
 COPY services/llm-gateway/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
