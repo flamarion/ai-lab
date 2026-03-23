@@ -11,14 +11,14 @@
 #   logs     Show logs (pass -f to follow)
 #
 # Targets:
-#   app      Gateway + Chat UI (ai-app VM)
-#   data     Postgres (ai-data VM)
+#   app      Gateway + Web UI (ai-app VM)
+#   data     Postgres + Qdrant (ai-data VM)
 #   all      Both (default)
 #
 # Examples:
 #   ./scripts/aictl.sh start            # pull + start everything
 #   ./scripts/aictl.sh restart app      # restart app services only
-#   ./scripts/aictl.sh logs data -f     # follow data service logs
+#   ./scripts/aictl.sh logs app -f      # follow app service logs
 #   ./scripts/aictl.sh status           # show all container status
 #   ./scripts/aictl.sh rebuild app      # force rebuild app images
 
@@ -103,13 +103,13 @@ do_start() {
 
     if $run_data; then
         log "Starting data services..."
-        compose_data up -d
+        compose_data up -d --remove-orphans
         ok "Data services started"
     fi
 
     if $run_app; then
         log "Building and starting app services..."
-        compose_app up --build -d
+        compose_app up --build -d --remove-orphans
         ok "App services started"
     fi
 
@@ -119,13 +119,13 @@ do_start() {
 do_stop() {
     if $run_app; then
         log "Stopping app services..."
-        compose_app down
+        compose_app down --remove-orphans
         ok "App services stopped"
     fi
 
     if $run_data; then
         log "Stopping data services..."
-        compose_data down
+        compose_data down --remove-orphans
         ok "Data services stopped"
     fi
 }
@@ -143,14 +143,14 @@ do_rebuild() {
     if $run_app; then
         log "Rebuilding app services (no cache)..."
         compose_app build --no-cache
-        compose_app up -d
+        compose_app up -d --remove-orphans
         ok "App services rebuilt and started"
     fi
 
     if $run_data; then
         log "Rebuilding data services (no cache)..."
         compose_data build --no-cache
-        compose_data up -d
+        compose_data up -d --remove-orphans
         ok "Data services rebuilt and started"
     fi
 
@@ -189,12 +189,13 @@ show_info() {
     echo ""
     echo -e "${BOLD}=== AI Lab ===${NC}"
     if $run_app; then
-        echo -e "  Chat UI:     ${GREEN}http://${LAN_IP}:8501${NC}"
-        echo -e "  Gateway:     ${GREEN}http://${LAN_IP}:8000${NC}"
-        echo -e "  API Docs:    ${GREEN}http://${LAN_IP}:8000/docs${NC}"
+        echo -e "  Web UI:      ${GREEN}http://${LAN_IP}${NC}"
+        echo -e "  Gateway API: ${GREEN}http://${LAN_IP}/api${NC}"
+        echo -e "  API Docs:    ${GREEN}http://${LAN_IP}/api/docs${NC}"
     fi
     if $run_data; then
         echo -e "  Postgres:    ${GREEN}${LAN_IP}:5432${NC}"
+        echo -e "  Qdrant:      ${GREEN}${LAN_IP}:6333${NC}"
     fi
     echo ""
 }
