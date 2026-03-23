@@ -151,19 +151,39 @@ function MCPManagement({ userId }: { userId: string }) {
   useEffect(() => { reload(); }, []);
 
   const handleAdd = async () => {
-    if (!addName.trim() || !addJson.trim()) return;
+    if (!addJson.trim()) return;
     try {
-      const config = JSON.parse(addJson);
-      setBusy(`Connecting to ${addName.trim()}...`);
-      setStatus("");
-      const result = await mcpApi.addServer(userId, addName.trim(), config);
-      setStatus(result.connected ? `Added — ${result.tools.length} tool(s)` : "Added but connection failed — check config");
+      const parsed = JSON.parse(addJson);
+
+      // Detect Cursor-style format: {"mcpServers": {"name": {...}, ...}}
+      if (parsed.mcpServers && typeof parsed.mcpServers === "object") {
+        const names = Object.keys(parsed.mcpServers);
+        setBusy(`Connecting to ${names.length} server(s)...`);
+        setStatus("");
+        // Send the full object — gateway extracts mcpServers
+        await mcpApi.addServer(userId, names[0] || "import", parsed);
+        setStatus(`Imported ${names.length} server(s): ${names.join(", ")}`);
+      } else {
+        // Single server — name is required
+        if (!addName.trim()) {
+          setStatus("Server name is required for single-server config");
+          return;
+        }
+        setBusy(`Connecting to ${addName.trim()}...`);
+        setStatus("");
+        const result = await mcpApi.addServer(userId, addName.trim(), parsed);
+        setStatus(result.connected ? `Added — ${result.tools.length} tool(s)` : "Added but connection failed — check config");
+      }
       setShowAdd(false);
       setAddName("");
       setAddJson("");
       reload();
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed");
+      if (err instanceof SyntaxError) {
+        setStatus("Invalid JSON");
+      } else {
+        setStatus(err instanceof Error ? err.message : "Failed");
+      }
     } finally {
       setBusy(null);
     }
@@ -234,9 +254,21 @@ function MCPManagement({ userId }: { userId: string }) {
 
       {showAdd && (
         <div className="bg-[var(--color-bg-secondary)] rounded-xl p-4 mb-4 space-y-3 animate-fade-in border border-[var(--color-border)]">
-          <input type="text" placeholder="Server name (e.g. wandb)" value={addName} onChange={(e) => setAddName(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]" />
-          <textarea placeholder='{"command": "uvx", "args": ["..."]}' value={addJson} onChange={(e) => setAddJson(e.target.value)} rows={5} className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm font-mono text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)] resize-none" />
-          <p className="text-xs text-[var(--color-text-muted)]">Use {"`${SECRET_NAME}`"} to reference secrets.</p>
+          <textarea
+            placeholder={'Paste Cursor/Claude Desktop format:\n{\n  "mcpServers": {\n    "wandb": {\n      "command": "uvx",\n      "args": ["--from", "git+https://...", "server"]\n    }\n  }\n}\n\nOr a single server config:\n{"command": "npx", "args": ["-y", "server@latest"]}'}
+            value={addJson}
+            onChange={(e) => setAddJson(e.target.value)}
+            rows={8}
+            className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm font-mono text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)] resize-y"
+          />
+          <input
+            type="text"
+            placeholder="Server name (required for single server, ignored for bulk import)"
+            value={addName}
+            onChange={(e) => setAddName(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
+          />
+          <p className="text-xs text-[var(--color-text-muted)]">Use {"`${SECRET_NAME}`"} in configs to reference secrets. Bulk import detects the {"`mcpServers`"} wrapper automatically.</p>
           <button onClick={handleAdd} disabled={!!busy} className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm font-medium disabled:opacity-50">{busy ? "Connecting..." : "Add & validate"}</button>
         </div>
       )}

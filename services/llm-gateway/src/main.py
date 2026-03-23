@@ -478,7 +478,7 @@ class MCPAdminRequest(BaseModel):
 @app.get("/mcp/servers")
 async def list_mcp_servers():
     """List configured MCP servers with connection status and tools."""
-    return {"servers": mcp_manager.list_servers()}
+    return {"servers": await mcp_manager.list_servers()}
 
 
 @app.get("/mcp/servers/{name}/config")
@@ -492,7 +492,7 @@ async def get_mcp_server_config(name: str, admin_user_id: str = Query(...)):
     if not db.is_available():
         raise HTTPException(status_code=503, detail="Database not available")
     await _require_admin(admin_user_id)
-    config = mcp_manager.get_config()
+    config = await mcp_manager.get_config()
     if name not in config:
         raise HTTPException(status_code=404, detail=f"Server '{name}' not found")
     return {"name": name, "config": config[name]}
@@ -500,17 +500,37 @@ async def get_mcp_server_config(name: str, admin_user_id: str = Query(...)):
 
 @app.post("/mcp/servers")
 async def add_mcp_server(request: AddMCPServerRequest):
-    """Admin-only: add an MCP server to config and reconnect."""
+    """Admin-only: add MCP server(s) to config and reconnect.
+
+    Accepts either:
+    - name + config: single server
+    - name + config where config has mcpServers: bulk import (Cursor format)
+    """
     if not db.is_available():
         raise HTTPException(status_code=503, detail="Database not available")
     await _require_admin(request.admin_user_id)
+
+    # Detect Cursor-style bulk format: {"mcpServers": {"name1": {...}, ...}}
+    if "mcpServers" in request.config:
+        servers_dict = request.config["mcpServers"]
+        if not isinstance(servers_dict, dict) or not servers_dict:
+            raise HTTPException(status_code=400, detail="mcpServers must be a non-empty object")
+        added = await mcp_manager.add_servers_bulk(servers_dict)
+        await mcp_manager.reload()
+        all_servers = await mcp_manager.list_servers()
+        return {
+            "status": "added",
+            "names": added,
+            "servers": [s for s in all_servers if s["name"] in added],
+        }
+
+    # Single server
     if not request.name.strip():
         raise HTTPException(status_code=400, detail="Server name is required")
     name = request.name.strip()
-    mcp_manager.add_server_config(name, request.config)
+    await mcp_manager.add_server_config(name, request.config)
     await mcp_manager.reload()
-    # Report actual connection status and discovered tools
-    servers = mcp_manager.list_servers()
+    servers = await mcp_manager.list_servers()
     server_info = next((s for s in servers if s["name"] == name), None)
     connected = server_info["connected"] if server_info else False
     found_tools = server_info["tools"] if server_info else []
@@ -528,7 +548,7 @@ async def remove_mcp_server(name: str, admin_user_id: str = Query(...)):
     if not db.is_available():
         raise HTTPException(status_code=503, detail="Database not available")
     await _require_admin(admin_user_id)
-    if not mcp_manager.remove_server(name):
+    if not await mcp_manager.remove_server(name):
         raise HTTPException(status_code=404, detail=f"Server '{name}' not found")
     await mcp_manager.reload()
     return {"status": "removed", "name": name}

@@ -83,7 +83,7 @@ class MCPClientManager:
 
     async def start(self):
         """Connect to all configured MCP servers."""
-        config = self._load_config()
+        config = await self._load_config()
         if not config:
             logger.info("No MCP servers configured")
             return
@@ -139,30 +139,47 @@ class MCPClientManager:
         await self.stop()
         await self.start()
 
-    def get_config(self) -> dict:
+    async def get_config(self) -> dict:
         """Return the current MCP server config."""
-        return self._load_config()
+        return await self._load_config()
 
-    def save_config(self, servers: dict):
-        """Write MCP server config to mcp_servers.json."""
+    async def save_config(self, servers: dict) -> None:
+        """Persist MCP server config to Postgres (and JSON file as backup)."""
+        from src import db
+        if db.is_available():
+            await db.save_mcp_config(servers)
+        # Also write to JSON file as fallback for when DB is unavailable
         data = {"mcpServers": servers}
-        with open(_CONFIG_PATH, "w") as f:
-            json.dump(data, f, indent=2)
-            f.write("\n")
+        try:
+            with open(_CONFIG_PATH, "w") as f:
+                json.dump(data, f, indent=2)
+                f.write("\n")
+        except Exception:
+            pass  # DB is the primary store; file write failure is non-critical
 
-    def add_server_config(self, name: str, config: dict):
-        """Add a server config (full JSON object) to the config file."""
-        all_config = self._load_config()
+    async def add_server_config(self, name: str, config: dict) -> None:
+        """Add a server config to the persisted config."""
+        all_config = await self._load_config()
         all_config[name] = config
-        self.save_config(all_config)
+        await self.save_config(all_config)
 
-    def remove_server(self, name: str) -> bool:
-        """Remove a server from the config file."""
-        config = self._load_config()
+    async def add_servers_bulk(self, servers: dict) -> list[str]:
+        """Add multiple servers from a Cursor-style mcpServers dict. Returns added names."""
+        all_config = await self._load_config()
+        added = []
+        for name, config in servers.items():
+            all_config[name] = config
+            added.append(name)
+        await self.save_config(all_config)
+        return added
+
+    async def remove_server(self, name: str) -> bool:
+        """Remove a server from the persisted config."""
+        config = await self._load_config()
         if name not in config:
             return False
         del config[name]
-        self.save_config(config)
+        await self.save_config(config)
         return True
 
     def get_tool_schemas(self) -> list[dict]:
@@ -184,9 +201,9 @@ class MCPClientManager:
             for name, (_, schema) in self._tools.items()
         ]
 
-    def list_servers(self) -> list[dict]:
+    async def list_servers(self) -> list[dict]:
         """Return server info dicts for the /mcp/servers API endpoint."""
-        config = self._load_config()
+        config = await self._load_config()
         connected = set(self._sessions.keys())
         results = []
         for name, cfg in config.items():
@@ -276,17 +293,26 @@ class MCPClientManager:
             logger.warning("Could not load secrets: %s", e)
             self._secrets = {}
 
-    def _load_config(self) -> dict:
-        """Load MCP server config from mcp_servers.json."""
-        if not _CONFIG_PATH.exists():
-            return {}
-        try:
-            with open(_CONFIG_PATH) as f:
-                data = json.load(f)
-            return data.get("mcpServers", {})
-        except Exception as e:
-            logger.warning("Failed to load MCP config from %s: %s", _CONFIG_PATH, e)
-            return {}
+    async def _load_config(self) -> dict:
+        """Load MCP server config. DB is primary, JSON file is fallback."""
+        from src import db
+        # Try DB first (persists across container restarts)
+        if db.is_available():
+            try:
+                config = await db.get_mcp_config()
+                if config:
+                    return config
+            except Exception as e:
+                logger.debug("Could not load MCP config from DB: %s", e)
+        # Fall back to JSON file (baked into Docker image)
+        if _CONFIG_PATH.exists():
+            try:
+                with open(_CONFIG_PATH) as f:
+                    data = json.load(f)
+                return data.get("mcpServers", {})
+            except Exception as e:
+                logger.warning("Failed to load MCP config from %s: %s", _CONFIG_PATH, e)
+        return {}
 
     async def _connect_server(self, name: str, config: dict):
         """Connect to an MCP server — dispatches to stdio or HTTP transport."""
