@@ -1,14 +1,56 @@
 "use client";
 
 import { type ToolUsed } from "@/lib/api";
-import { Wrench, ChevronDown, ChevronUp } from "lucide-react";
-import { useState } from "react";
+import { Wrench, ChevronDown, ChevronUp, Copy, Check } from "lucide-react";
+import { useState, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface Props {
   role: "user" | "assistant";
   content: string;
   toolsUsed?: ToolUsed[];
   isStreaming?: boolean;
+}
+
+function CodeBlock({ className, children }: { className?: string; children: React.ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const text = String(children).replace(/\n$/, "");
+  const lang = className?.replace("language-", "") || "";
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [text]);
+
+  return (
+    <div className="relative group my-3">
+      {lang && (
+        <div className="flex items-center justify-between px-4 py-1.5 bg-[var(--color-bg)] border border-b-0 border-[var(--color-border)] rounded-t-lg">
+          <span className="text-xs text-[var(--color-text-muted)]">{lang}</span>
+          <button
+            onClick={handleCopy}
+            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] flex items-center gap-1 transition-colors"
+          >
+            {copied ? <Check size={12} /> : <Copy size={12} />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+      )}
+      <pre className={`bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-4 overflow-x-auto text-sm ${lang ? "rounded-b-lg" : "rounded-lg"}`}>
+        <code className={`font-[var(--font-mono)] ${className || ""}`}>{text}</code>
+      </pre>
+      {!lang && (
+        <button
+          onClick={handleCopy}
+          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] p-1 rounded transition-opacity"
+        >
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+        </button>
+      )}
+    </div>
+  );
 }
 
 export default function ChatMessage({ role, content, toolsUsed, isStreaming }: Props) {
@@ -51,9 +93,69 @@ export default function ChatMessage({ role, content, toolsUsed, isStreaming }: P
           </div>
         )}
 
-        {/* Message content */}
+        {/* Message content — rendered as markdown for assistant, plain for user */}
         <div className="message-content text-[0.9375rem] leading-relaxed">
-          {content}
+          {role === "assistant" ? (
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                // Code blocks with syntax label + copy button
+                code({ className, children, ...props }) {
+                  const isBlock = className || String(children).includes("\n");
+                  if (isBlock) {
+                    return <CodeBlock className={className}>{children}</CodeBlock>;
+                  }
+                  // Inline code
+                  return (
+                    <code className="font-[var(--font-mono)] text-[0.85em] bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 rounded" {...props}>
+                      {children}
+                    </code>
+                  );
+                },
+                // Remove wrapping <pre> since CodeBlock handles it
+                pre({ children }) {
+                  return <>{children}</>;
+                },
+                // Tables
+                table({ children }) {
+                  return (
+                    <div className="overflow-x-auto my-3">
+                      <table className="w-full text-sm border-collapse border border-[var(--color-border)]">
+                        {children}
+                      </table>
+                    </div>
+                  );
+                },
+                th({ children }) {
+                  return (
+                    <th className="border border-[var(--color-border)] px-3 py-2 bg-[var(--color-bg-secondary)] text-left font-medium">
+                      {children}
+                    </th>
+                  );
+                },
+                td({ children }) {
+                  return (
+                    <td className="border border-[var(--color-border)] px-3 py-2">
+                      {children}
+                    </td>
+                  );
+                },
+                // Links open in new tab
+                a({ href, children }) {
+                  return (
+                    <a href={href} target="_blank" rel="noopener noreferrer" className="text-[var(--color-accent)] underline underline-offset-2 hover:text-[var(--color-accent-hover)]">
+                      {children}
+                    </a>
+                  );
+                },
+              }}
+            >
+              {content}
+            </ReactMarkdown>
+          ) : (
+            // User messages as plain text (preserve whitespace)
+            <span className="whitespace-pre-wrap">{content}</span>
+          )}
         </div>
 
         {/* Streaming indicator */}
