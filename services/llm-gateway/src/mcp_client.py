@@ -278,12 +278,14 @@ class MCPClientManager:
             await self._connect_stdio(name, config)
 
     def _build_env(self, server_env: dict | None) -> dict:
-        """Build a minimal environment for MCP subprocesses."""
+        """Build a minimal environment for MCP subprocesses.
+
+        All values are cast to str (subprocess env must be strings).
+        """
         safe_env = {k: v for k, v in os.environ.items() if k in _ENV_ALLOWLIST}
         if server_env:
-            # Substitute secrets in env values
             for k, v in server_env.items():
-                safe_env[k] = self._substitute_secrets(v) if isinstance(v, str) else v
+                safe_env[k] = self._substitute_secrets(str(v))
         return safe_env
 
     async def _connect_stdio(self, name: str, config: dict):
@@ -296,13 +298,18 @@ class MCPClientManager:
             logger.warning("MCP server '%s' has no command, skipping", name)
             return
 
+        # Substitute secrets in args (e.g. ["--token", "${GITHUB_PAT}"])
+        resolved_args = [
+            self._substitute_secrets(str(a)) for a in args
+        ]
+
         server_params = StdioServerParameters(
             command=command,
-            args=args,
+            args=resolved_args,
             env=self._build_env(env),
         )
 
-        logger.info("Connecting to MCP server '%s' (stdio): %s %s", name, command, " ".join(args))
+        logger.info("Connecting to MCP server '%s' (stdio): %s %s", name, command, " ".join(resolved_args))
 
         transport = await self._exit_stack.enter_async_context(
             stdio_client(server_params)
@@ -324,9 +331,9 @@ class MCPClientManager:
             return
 
         headers = config.get("headers", {})
-        # Substitute secrets in headers (e.g. Authorization: Bearer ${API_KEY})
+        # Substitute secrets in headers and cast all values to str
         resolved_headers = {
-            k: self._substitute_secrets(v) if isinstance(v, str) else v
+            k: self._substitute_secrets(str(v))
             for k, v in headers.items()
         }
 

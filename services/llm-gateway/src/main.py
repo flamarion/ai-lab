@@ -489,9 +489,20 @@ async def add_mcp_server(request: AddMCPServerRequest):
     await _require_admin(request.admin_user_id)
     if not request.name.strip():
         raise HTTPException(status_code=400, detail="Server name is required")
-    mcp_manager.add_server_config(request.name.strip(), request.config)
+    name = request.name.strip()
+    mcp_manager.add_server_config(name, request.config)
     await mcp_manager.reload()
-    return {"status": "added", "name": request.name}
+    # Report actual connection status and discovered tools
+    servers = mcp_manager.list_servers()
+    server_info = next((s for s in servers if s["name"] == name), None)
+    connected = server_info["connected"] if server_info else False
+    found_tools = server_info["tools"] if server_info else []
+    return {
+        "status": "added",
+        "name": name,
+        "connected": connected,
+        "tools": found_tools,
+    }
 
 
 @app.delete("/mcp/servers/{name}")
@@ -523,10 +534,6 @@ class SecretRequest(BaseModel):
     admin_user_id: str
     key: str
     value: str
-
-
-class DeleteSecretRequest(BaseModel):
-    admin_user_id: str
 
 
 @app.get("/secrets")

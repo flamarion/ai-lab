@@ -595,7 +595,7 @@ elif st.session_state.page == "Settings":
                         if transport == "http":
                             detail = srv.get("url", "")
                         else:
-                            detail = f"{srv.get('command', '')} {' '.join(srv.get('args', []))}"
+                            detail = f"{srv.get('command', '')} {' '.join(str(a) for a in srv.get('args', []))}"
                         col1, col2 = st.columns([4, 1])
                         with col1:
                             st.markdown(f"**{srv['name']}** — {status} ({tool_list})")
@@ -646,7 +646,12 @@ elif st.session_state.page == "Settings":
                                 timeout=30.0,
                             )
                             if resp.status_code == 200:
-                                st.success(f"Added '{mcp_name.strip()}'")
+                                data = resp.json()
+                                if data.get("connected"):
+                                    tool_count = len(data.get("tools", []))
+                                    st.success(f"Added '{mcp_name.strip()}' — connected, {tool_count} tool(s)")
+                                else:
+                                    st.warning(f"Added '{mcp_name.strip()}' but connection failed — check config")
                                 st.rerun()
                             else:
                                 st.error(resp.json().get("detail", "Failed to add server"))
