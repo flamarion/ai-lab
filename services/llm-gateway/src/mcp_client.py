@@ -339,14 +339,17 @@ class MCPClientManager:
         await self._register_tools(name, session)
 
     async def _connect_http(self, name: str, config: dict):
-        """Connect to an MCP server via HTTP (streamable HTTP) transport."""
+        """Connect to an MCP server via HTTP transport.
+
+        Tries streamable HTTP first (MCP SDK >= 1.8), falls back to SSE
+        for older servers that use Server-Sent Events.
+        """
         url = config.get("url")
         if not url:
             logger.warning("MCP server '%s' has no URL, skipping", name)
             return
 
         headers = config.get("headers", {})
-        # Substitute secrets in headers and cast all values to str
         resolved_headers = {
             k: self._substitute_secrets(str(v))
             for k, v in headers.items()
@@ -354,24 +357,60 @@ class MCPClientManager:
 
         logger.info("Connecting to MCP server '%s' (http): %s", name, url)
 
+        # Try streamable HTTP first, then SSE fallback
+        session = await self._try_streamable_http(name, url, resolved_headers)
+        if not session:
+            session = await self._try_sse(name, url, resolved_headers)
+        if not session:
+            logger.warning("MCP server '%s': no HTTP transport succeeded", name)
+            return
+
+        self._sessions[name] = session
+        await self._register_tools(name, session)
+
+    async def _try_streamable_http(self, name: str, url: str, headers: dict) -> ClientSession | None:
+        """Try connecting via streamable HTTP transport."""
         try:
             from mcp.client.streamable_http import streamable_http_client
 
             transport = await self._exit_stack.enter_async_context(
-                streamable_http_client(url, headers=resolved_headers)
+                streamable_http_client(url, headers=headers)
             )
             read, write, _ = transport
             session = await self._exit_stack.enter_async_context(
                 ClientSession(read, write)
             )
             await session.initialize()
-
-            self._sessions[name] = session
-            await self._register_tools(name, session)
+            logger.info("MCP server '%s': connected via streamable HTTP", name)
+            return session
         except ImportError:
-            logger.warning("MCP HTTP transport not available — upgrade mcp package. Skipping '%s'", name)
+            logger.debug("streamable_http not available, trying SSE")
+            return None
         except Exception as e:
-            raise  # re-raise so the caller logs the specific error
+            logger.debug("streamable HTTP failed for '%s': %s — trying SSE", name, e)
+            return None
+
+    async def _try_sse(self, name: str, url: str, headers: dict) -> ClientSession | None:
+        """Try connecting via SSE (Server-Sent Events) transport."""
+        try:
+            from mcp.client.sse import sse_client
+
+            transport = await self._exit_stack.enter_async_context(
+                sse_client(url, headers=headers)
+            )
+            read, write = transport
+            session = await self._exit_stack.enter_async_context(
+                ClientSession(read, write)
+            )
+            await session.initialize()
+            logger.info("MCP server '%s': connected via SSE", name)
+            return session
+        except ImportError:
+            logger.debug("SSE transport not available")
+            return None
+        except Exception as e:
+            logger.warning("SSE connection failed for '%s': %s", name, e)
+            return None
 
     async def _register_tools(self, name: str, session: ClientSession):
         """Discover tools from a connected session and register them."""
