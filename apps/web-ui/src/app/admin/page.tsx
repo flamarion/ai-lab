@@ -144,6 +144,7 @@ function MCPManagement({ userId }: { userId: string }) {
   const [addName, setAddName] = useState("");
   const [addJson, setAddJson] = useState("");
   const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState<string | null>(null); // null or description of what's happening
 
   const reload = () => mcpApi.listServers().then((d) => setServers(d.servers)).catch(() => {});
 
@@ -153,14 +154,18 @@ function MCPManagement({ userId }: { userId: string }) {
     if (!addName.trim() || !addJson.trim()) return;
     try {
       const config = JSON.parse(addJson);
+      setBusy(`Connecting to ${addName.trim()}...`);
+      setStatus("");
       const result = await mcpApi.addServer(userId, addName.trim(), config);
-      setStatus(result.connected ? `Added — ${result.tools.length} tool(s)` : "Added but connection failed");
+      setStatus(result.connected ? `Added — ${result.tools.length} tool(s)` : "Added but connection failed — check config");
       setShowAdd(false);
       setAddName("");
       setAddJson("");
       reload();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -174,12 +179,30 @@ function MCPManagement({ userId }: { userId: string }) {
     if (!editServer) return;
     try {
       const config = JSON.parse(editJson);
+      setBusy(`Reconnecting to ${editServer}...`);
+      setStatus("");
       const result = await mcpApi.addServer(userId, editServer, config);
-      setStatus(result.connected ? `Updated — ${result.tools.length} tool(s)` : "Updated but connection failed");
+      setStatus(result.connected ? `Updated — ${result.tools.length} tool(s)` : "Updated but connection failed — check config");
       setEditServer(null);
       reload();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleRestart = async () => {
+    setBusy("Restarting all MCP servers...");
+    setStatus("");
+    try {
+      const d = await mcpApi.restart(userId);
+      setStatus(`Restarted — ${d.tools.length} tool(s)`);
+      reload();
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Restart failed");
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -188,7 +211,7 @@ function MCPManagement({ userId }: { userId: string }) {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">MCP Servers</h2>
         <div className="flex items-center gap-2">
-          <button onClick={() => mcpApi.restart(userId).then((d) => { setStatus(`Restarted — ${d.tools.length} tool(s)`); reload(); })} className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title="Restart all">
+          <button onClick={handleRestart} disabled={!!busy} className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-30" title="Restart all">
             <RefreshCw size={14} />
           </button>
           <button onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-1 text-xs text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
@@ -197,8 +220,16 @@ function MCPManagement({ userId }: { userId: string }) {
         </div>
       </div>
 
-      {status && (
-        <p className="text-xs text-[var(--color-accent)] mb-3 animate-fade-in">{status}</p>
+      {busy && (
+        <div className="flex items-center gap-2 text-xs text-[var(--color-accent)] mb-3 animate-fade-in">
+          <span className="typing-dot w-1.5 h-1.5 rounded-full bg-[var(--color-accent)]" />
+          <span className="typing-dot w-1.5 h-1.5 rounded-full bg-[var(--color-accent)]" />
+          <span className="typing-dot w-1.5 h-1.5 rounded-full bg-[var(--color-accent)]" />
+          {busy}
+        </div>
+      )}
+      {status && !busy && (
+        <p className={`text-xs mb-3 animate-fade-in ${status.includes("failed") || status.includes("Failed") ? "text-[var(--color-error)]" : "text-[var(--color-accent)]"}`}>{status}</p>
       )}
 
       {showAdd && (
@@ -206,7 +237,7 @@ function MCPManagement({ userId }: { userId: string }) {
           <input type="text" placeholder="Server name (e.g. wandb)" value={addName} onChange={(e) => setAddName(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]" />
           <textarea placeholder='{"command": "uvx", "args": ["..."]}' value={addJson} onChange={(e) => setAddJson(e.target.value)} rows={5} className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm font-mono text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)] resize-none" />
           <p className="text-xs text-[var(--color-text-muted)]">Use {"`${SECRET_NAME}`"} to reference secrets.</p>
-          <button onClick={handleAdd} className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm font-medium">Add & validate</button>
+          <button onClick={handleAdd} disabled={!!busy} className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm font-medium disabled:opacity-50">{busy ? "Connecting..." : "Add & validate"}</button>
         </div>
       )}
 
@@ -216,8 +247,8 @@ function MCPManagement({ userId }: { userId: string }) {
           <div className="text-sm font-medium">Editing: {editServer}</div>
           <textarea value={editJson} onChange={(e) => setEditJson(e.target.value)} rows={6} className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm font-mono text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)] resize-none" />
           <div className="flex gap-2">
-            <button onClick={handleSaveEdit} className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm font-medium">Save & reconnect</button>
-            <button onClick={() => setEditServer(null)} className="px-4 py-2 rounded-lg bg-[var(--color-bg-hover)] text-sm">Cancel</button>
+            <button onClick={handleSaveEdit} disabled={!!busy} className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm font-medium disabled:opacity-50">{busy ? "Connecting..." : "Save & reconnect"}</button>
+            <button onClick={() => setEditServer(null)} disabled={!!busy} className="px-4 py-2 rounded-lg bg-[var(--color-bg-hover)] text-sm disabled:opacity-50">Cancel</button>
           </div>
         </div>
       )}
