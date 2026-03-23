@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth } from "@/lib/auth-context";
-import { chat as chatApi, conversations as convApi, type ChatMessage as CM, type ToolUsed } from "@/lib/api";
+import { chat as chatApi, conversations as convApi, type ToolUsed } from "@/lib/api";
 import ChatSidebar from "@/components/chat-sidebar";
 import ChatMessageComponent from "@/components/chat-message";
 import { useRouter } from "next/navigation";
@@ -22,7 +22,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [models, setModels] = useState<string[]>([]);
+  const [sidebarRefresh, setSidebarRefresh] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -30,11 +30,6 @@ export default function ChatPage() {
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
   }, [user, loading, router]);
-
-  // Load models
-  useEffect(() => {
-    chatApi.models().then((d) => setModels(d.models)).catch(() => {});
-  }, []);
 
   // Load conversation when selected
   useEffect(() => {
@@ -92,6 +87,7 @@ export default function ChatPage() {
       });
 
       setConversationId(result.conversation_id);
+      setSidebarRefresh((n) => n + 1);
       setMessages((prev) => [
         ...prev,
         {
@@ -131,6 +127,7 @@ export default function ChatPage() {
         onSelect={handleNewChat}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        refreshKey={sidebarRefresh}
       />
 
       {/* Main chat area */}
@@ -191,7 +188,7 @@ export default function ChatPage() {
             <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
               {messages.map((m, i) => (
                 <ChatMessageComponent
-                  key={i}
+                  key={`${i}-${m.role}-${m.content.slice(0, 32)}`}
                   role={m.role}
                   content={m.content}
                   toolsUsed={m.toolsUsed}

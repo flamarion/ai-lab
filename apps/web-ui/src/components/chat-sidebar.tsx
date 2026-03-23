@@ -11,16 +11,22 @@ interface Props {
   onSelect: (id: string | null) => void;
   open: boolean;
   onClose: () => void;
+  refreshKey?: number; // increment to trigger conversation list refresh
 }
 
-export default function ChatSidebar({ currentId, onSelect, open, onClose }: Props) {
+export default function ChatSidebar({ currentId, onSelect, open, onClose, refreshKey }: Props) {
   const { user, logout } = useAuth();
   const [convs, setConvs] = useState<Conversation[]>([]);
 
-  useEffect(() => {
+  const refreshConvs = () => {
     if (!user) return;
     convApi.list(user.user_id).then((d) => setConvs(d.conversations)).catch(() => {});
-  }, [user, currentId]);
+  };
+
+  // Load conversations on mount, user change, or explicit refresh
+  useEffect(() => {
+    refreshConvs();
+  }, [user, refreshKey]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
