@@ -2,6 +2,7 @@
 
 import { useAuth } from "@/lib/auth-context";
 import { admin as adminApi, mcp as mcpApi, secrets as secretsApi, type AdminUser, type MCPServer } from "@/lib/api";
+import JsonEditor from "@/components/json-editor";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ArrowLeft, Plus, Trash2, Shield, ShieldOff, Baby, Edit2, RefreshCw, Eye, EyeOff, Key } from "lucide-react";
@@ -254,12 +255,11 @@ function MCPManagement({ userId }: { userId: string }) {
 
       {showAdd && (
         <div className="bg-[var(--color-bg-secondary)] rounded-xl p-4 mb-4 space-y-3 animate-fade-in border border-[var(--color-border)]">
-          <textarea
-            placeholder={'Paste Cursor/Claude Desktop format:\n{\n  "mcpServers": {\n    "wandb": {\n      "command": "uvx",\n      "args": ["--from", "git+https://...", "server"]\n    }\n  }\n}\n\nOr a single server config:\n{"command": "npx", "args": ["-y", "server@latest"]}'}
+          <JsonEditor
             value={addJson}
-            onChange={(e) => setAddJson(e.target.value)}
+            onChange={setAddJson}
             rows={8}
-            className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm font-mono text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)] resize-y"
+            placeholder={'Paste Cursor/Claude Desktop format:\n{\n  "mcpServers": {\n    "wandb": {\n      "command": "uvx",\n      "args": ["--from", "git+https://...", "server"]\n    }\n  }\n}'}
           />
           <input
             type="text"
@@ -277,7 +277,7 @@ function MCPManagement({ userId }: { userId: string }) {
       {editServer && (
         <div className="bg-[var(--color-bg-secondary)] rounded-xl p-4 mb-4 space-y-3 animate-fade-in border border-[var(--color-accent)]">
           <div className="text-sm font-medium">Editing: {editServer}</div>
-          <textarea value={editJson} onChange={(e) => setEditJson(e.target.value)} rows={6} className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm font-mono text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)] resize-none" />
+          <JsonEditor value={editJson} onChange={setEditJson} rows={6} />
           <div className="flex gap-2">
             <button onClick={handleSaveEdit} disabled={!!busy} className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm font-medium disabled:opacity-50">{busy ? "Connecting..." : "Save & reconnect"}</button>
             <button onClick={() => setEditServer(null)} disabled={!!busy} className="px-4 py-2 rounded-lg bg-[var(--color-bg-hover)] text-sm disabled:opacity-50">Cancel</button>
