@@ -73,6 +73,11 @@ class MCPClientManager:
         self._sessions: dict[str, ClientSession] = {}
         self._tools: dict[str, tuple[str, dict]] = {}
         self._lock = asyncio.Lock()
+        # Keep references to old exit stacks so they're never garbage
+        # collected. GC triggers async_generator_athrow on stdio_client
+        # contexts, which crashes with anyio cross-task RuntimeError.
+        # Old stacks are harmless — subprocesses die on container restart.
+        self._old_stacks: list[AsyncExitStack] = []
         # Cache of secrets for substitution (loaded on start/reload)
         self._secrets: dict[str, str] = {}
 
@@ -116,6 +121,8 @@ class MCPClientManager:
         when the container restarts.
         """
         async with self._lock:
+            # Stash old stack to prevent GC from closing its async generators
+            self._old_stacks.append(self._exit_stack)
             self._exit_stack = AsyncExitStack()
             self._sessions.clear()
             self._tools.clear()
