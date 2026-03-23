@@ -16,7 +16,7 @@ Personal AI engineering lab for learning end-to-end AI system design. The goal i
 
 ## Infrastructure
 
-- **GPU PC** (192.168.1.178, hostname: mato): Ollama on port 11434 — serves mistral:7b, qwen3.5:latest, llama3:latest. 2x RTX 3060 12GB (24GB total).
+- **GPU PC** (192.168.1.178, hostname: mato): Ollama on port 11434 — serves mistral:7b, qwen3.5:latest, llama3.1:8b, gemma3:12b, llama3:latest. 2x RTX 3060 12GB (24GB total).
 - **ai-app VM** (192.168.1.201, Proxmox): Runs app services via Docker — gateway, chat UI, W&B Weave
 - **ai-data VM** (192.168.1.202, Proxmox): Data services — Postgres (conversation persistence), Qdrant (vector search for RAG)
 - **Ceph cluster**: 4TB — RBD block storage + S3 via RadosGW
@@ -232,7 +232,7 @@ MCP server config format (in `mcp_servers.json`):
 }
 ```
 
-Only tool-capable models work: llama3.1, qwen3.5. mistral:7b and llama3 do not support Ollama's tools API.
+Only tool-capable models work: llama3.1, qwen3.5, gemma3. mistral:7b and llama3 do not support Ollama's tools API.
 
 ## Key Patterns
 

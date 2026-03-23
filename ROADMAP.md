@@ -27,7 +27,8 @@ End goal: An agentic system running on homelab infrastructure.
 │  Ollama :11434                │  │  Postgres :5432        │
 │  ├── mistral:7b               │  │  ├── conversations     │
 │  ├── qwen3.5:latest           │  │  └── messages          │
-│  └── llama3:latest            │  │                        │
+│  ├── llama3.1:8b              │  │                        │
+│  └── gemma3:12b               │  │                        │
 │                               │  │  Qdrant :6333  (P4)    │
 │  2x RTX 3060 12GB (24GB)     │  │                        │
 │  Flash attn, q8 KV, 16k ctx  │  │                        │
@@ -259,7 +260,7 @@ Phase 6 tool-use flow:
 
 **What you learned:**
 - Tool use protocol: model doesn't run tools — it *requests* them. The gateway orchestrates: send tools → get tool_calls → execute → feed result back → get final answer
-- Not all models support tool use: llama3.1+, qwen3.5 do; mistral:7b (raw mode only), llama3 (none). The model itself must support the tool_calls response format
+- Not all models support tool use: llama3.1+, qwen3.5, gemma3 do; mistral:7b (raw mode only), llama3 (none). The model itself must support the tool_calls response format
 - Tool schemas use JSON Schema (same as OpenAI function calling) — the model reads the description to decide when to call each tool
 - Multi-round tool use: the model can call tools multiple times in sequence (up to max_tool_rounds)
 - Safe eval for calculator: compile to AST, whitelist allowed names, no arbitrary code execution

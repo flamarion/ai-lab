@@ -573,7 +573,7 @@ elif st.session_state.page == "Settings":
         value=prefs.get("use_tools", _ADV_DEFAULTS["use_tools"]),
         key="adv_use_tools",
         on_change=_save_preferences,
-        help="Let the model use tools (calculator, current time, MCP tools). Requires a tool-capable model (llama3.1, qwen3.5).",
+        help="Let the model use tools (calculator, current time, MCP tools). Requires a tool-capable model (llama3.1, qwen3.5, gemma3).",
     )
 
     # MCP server management — admin-only (these endpoints can execute commands)
