@@ -6,28 +6,29 @@ This is not about playing with models. It's about learning how **real AI systems
 
 ## What's Built
 
-- **Chat UI** (Streamlit) — multi-page app with Chat, Settings, and Admin pages
-- **LLM Gateway** (FastAPI) — abstracts Ollama, handles auth, RAG, smart routing, conversations
+- **Web UI** (Next.js) — modern chat interface with conversation sidebar, markdown rendering, code highlighting. Separate pages for Chat, Settings, and Admin
+- **LLM Gateway** (FastAPI) — abstracts Ollama, handles auth, RAG, smart routing, tool use, MCP, conversations
+- **Tool use** — local tools (calculator, unit converter, current time) + MCP servers (community tool ecosystem)
+- **MCP integration** — connect to any MCP server (stdio/HTTP/SSE). Admin UI for managing servers, Cursor-style JSON config, secrets store for credentials
 - **RAG pipeline** — ingest documents (PDF, DOCX, XLSX, text, code, config), chunk, embed, vector search via Qdrant
-- **Smart model routing** — code prompts route to qwen3.5, general prompts to mistral:7b (override anytime)
+- **Smart model routing** — code prompts route to qwen3.5, general prompts to mistral:7b, tool prompts to llama3.1 (override anytime)
 - **PIN-based auth** — per-user conversations, first user is auto-admin, child account flag
-- **Admin panel** — manage users, toggle admin/child, reset PINs, delete users
-- **Multi-file upload** — 40+ file types supported in chat and settings
-- **Settings persistence** — per-user model/temperature preferences stored in Postgres
+- **Admin panel** — manage users, MCP servers, secrets store
+- **Settings persistence** — per-user preferences stored in Postgres JSONB
 - **Observability** — W&B Weave tracing (optional, toggle via env var)
-- **nginx reverse proxy** — family accesses `http://<vm-ip>` on port 80, no port needed
+- **nginx reverse proxy** — family accesses `http://<vm-ip>` on port 80
 - **Auto migrations** — numbered SQL files applied on gateway startup, advisory-locked
 
 ## Architecture
 
 ```
-User → nginx (:80) → Streamlit (chat-ui:8501) → FastAPI (llm-gateway:8000) → Ollama (GPU PC:11434)
-                                                      ↓              ↓              ↑
-                                                 W&B Weave      Postgres        /api/embed
-                                                 (tracing)      (ai-data)       (embeddings)
-                                                                   ↓
-                                                                Qdrant
-                                                               (ai-data:6333)
+User → nginx (:80) → Next.js (web-ui:3000) → FastAPI (llm-gateway:8000) → Ollama (GPU PC:11434)
+                                                     ↓              ↓              ↑
+                                                W&B Weave      Postgres     /api/embed + MCP
+                                                (tracing)      (ai-data)      (tools)
+                                                                  ↓
+                                                               Qdrant
+                                                              (ai-data:6333)
 ```
 
 ### Infrastructure
@@ -148,22 +149,28 @@ ai-lab/
 │       ├── code.json                  # Code/technical test cases (8)
 │       └── rag.json                   # RAG-dependent test cases (3)
 ├── apps/
-│   └── chat-ui/
-│       ├── app.py                     # Streamlit multi-page app (chat, settings, admin)
-│       ├── Dockerfile
-│       └── requirements.txt
+│   ├── web-ui/                        # Next.js frontend (active)
+│   │   ├── src/
+│   │   │   ├── app/                   # Pages: chat, settings, admin, login
+│   │   │   ├── components/            # Chat message, sidebar, JSON editor
+│   │   │   └── lib/                   # API client, auth context
+│   │   ├── Dockerfile
+│   │   └── package.json
+│   └── chat-ui/                       # Streamlit frontend (legacy, kept for reference)
+│       └── app.py
 ├── services/
 │   └── llm-gateway/
 │       ├── src/
-│       │   ├── main.py                # FastAPI app (chat, auth, admin, RAG, conversations)
-│       │   ├── ollama_client.py       # Ollama HTTP client (chat + embed)
-│       │   ├── router.py              # Smart model routing (code vs general)
-│       │   ├── db.py                  # asyncpg connection pool and queries
+│       │   ├── main.py                # FastAPI app (chat, auth, admin, RAG, MCP, secrets)
+│       │   ├── ollama_client.py       # Ollama HTTP client (chat + embed + tools)
+│       │   ├── tools.py               # Local tool registry (calculator, time, unit convert)
+│       │   ├── mcp_client.py          # MCP client manager (stdio/HTTP/SSE transports)
+│       │   ├── router.py              # Smart model routing (code vs general vs tools)
+│       │   ├── db.py                  # asyncpg pool + queries (users, convos, secrets, MCP config)
 │       │   ├── chunker.py             # Document loading and chunking
 │       │   ├── vector_store.py        # Qdrant wrapper (upsert, search, delete)
-│       │   ├── migrations.py          # Auto-apply SQL migrations on startup
-│       │   └── mcp_client.py          # MCP client manager (connect to MCP servers)
-│       ├── mcp_servers.json           # MCP server config (same format as Claude Desktop)
+│       │   └── migrations.py          # Auto-apply SQL migrations on startup
+│       ├── mcp_servers.json           # Default MCP config (fallback when DB unavailable)
 │       ├── Dockerfile
 │       └── requirements.txt
 ├── shared/
@@ -172,7 +179,7 @@ ai-lab/
 │           └── config.py              # Centralized settings (env vars → singleton)
 ├── infra/
 │   ├── docker/
-│   │   ├── docker-compose.yml         # ai-app VM (nginx + gateway + chat UI)
+│   │   ├── docker-compose.yml         # ai-app VM (nginx + gateway + web UI)
 │   │   ├── docker-compose.data.yml    # ai-data VM (Postgres + Qdrant)
 │   │   └── nginx/
 │   │       └── default.conf           # Reverse proxy config
@@ -182,7 +189,9 @@ ai-lab/
 │       ├── 003_users.sql              # users table + conversations.user_id FK
 │       ├── 004_user_admin.sql         # is_admin column
 │       ├── 005_user_delete_cascade.sql
-│       └── 006_user_child_flag.sql    # is_child column (for future guardrails)
+│       ├── 006_user_child_flag.sql    # is_child column
+│       ├── 007_secrets.sql            # secrets key-value store
+│       └── 008_mcp_config.sql         # MCP server config persistence
 └── scripts/
     ├── run_local.sh                   # Local dev (interactive)
     ├── deploy-app.sh                  # Deploy gateway + chat UI
@@ -195,7 +204,7 @@ ai-lab/
 
 ## Tech Stack
 
-Python 3.12, FastAPI, Streamlit, httpx, Ollama, Postgres 16 (asyncpg), Qdrant, bcrypt, W&B Weave, pypdf, MCP (Model Context Protocol), Docker Compose
+Python 3.12, FastAPI, Next.js 16, TypeScript, Tailwind CSS, httpx, Ollama, Postgres 16 (asyncpg), Qdrant, bcrypt, W&B Weave, MCP (Model Context Protocol), Docker Compose
 
 ## Roadmap
 
