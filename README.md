@@ -36,7 +36,7 @@ User → nginx (:80) → Next.js (web-ui:3000) → FastAPI (llm-gateway:8000) �
 | Host | Role | Details |
 |------|------|---------|
 | **GPU PC** (mato, 192.168.1.178) | Inference | Ollama :11434 — mistral:7b, qwen3.5, llama3.1:8b, gemma3:12b, nomic-embed-text-v2-moe. 2x RTX 3060 12GB (24GB total) |
-| **ai-app VM** (192.168.1.201, Proxmox) | Application | nginx + gateway + chat UI via Docker |
+| **ai-app VM** (192.168.1.201, Proxmox) | Application | nginx + gateway + web UI via Docker |
 | **ai-data VM** (192.168.1.202, Proxmox) | Data | Postgres :5432 + Qdrant :6333 via Docker |
 | **Ceph cluster** | Storage | 4TB — RBD block + S3 via RadosGW (available, not yet used) |
 
@@ -57,14 +57,14 @@ cp .env.example .env   # fill in WANDB_API_KEY and DATABASE_URL
 ```
 
 Services start at:
-- Chat UI: http://localhost:8501
-- LLM Gateway: http://localhost:8000
-- Gateway API docs: http://localhost:8000/docs
+- Web UI: http://localhost (port 80 via nginx)
+- Gateway API: http://localhost/api
+- API docs: http://localhost/api/docs
 
 ## Homelab Deployment
 
 ```bash
-# ai-app VM (gateway + chat UI)
+# ai-app VM (gateway + web UI)
 ./scripts/deploy-app.sh              # pull + build + start detached
 ./scripts/deploy-app.sh --status     # container status
 ./scripts/deploy-app.sh --logs       # view logs (add -f to follow)
@@ -194,7 +194,7 @@ ai-lab/
 │       └── 008_mcp_config.sql         # MCP server config persistence
 └── scripts/
     ├── run_local.sh                   # Local dev (interactive)
-    ├── deploy-app.sh                  # Deploy gateway + chat UI
+    ├── deploy-app.sh                  # Deploy gateway + web UI
     ├── deploy-data.sh                 # Deploy Postgres + Qdrant
     ├── aictl.sh                       # Unified service control
     ├── ingest.py                      # CLI tool for document ingestion
