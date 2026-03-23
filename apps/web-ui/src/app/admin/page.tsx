@@ -318,6 +318,7 @@ function SecretsManagement({ userId }: { userId: string }) {
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
   const [showValue, setShowValue] = useState(false);
+  const [multiline, setMultiline] = useState(false);
 
   const reload = () => secretsApi.list(userId).then((d) => setItems(d.secrets)).catch(() => {});
 
@@ -347,12 +348,32 @@ function SecretsManagement({ userId }: { userId: string }) {
       {showAdd && (
         <div className="bg-[var(--color-bg-secondary)] rounded-xl p-4 mb-4 space-y-3 animate-fade-in border border-[var(--color-border)]">
           <input type="text" placeholder="Key (e.g. WANDB_API_KEY)" value={newKey} onChange={(e) => setNewKey(e.target.value)} className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm font-mono text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]" />
-          <div className="relative">
-            <input type={showValue ? "text" : "password"} placeholder="Value" value={newValue} onChange={(e) => setNewValue(e.target.value)} className="w-full px-3 py-2 pr-10 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]" />
-            <button onClick={() => setShowValue(!showValue)} className="absolute right-2 top-2 text-[var(--color-text-muted)]">
-              {showValue ? <EyeOff size={14} /> : <Eye size={14} />}
-            </button>
+          <div className="flex items-center gap-2 text-xs">
+            <label className="flex items-center gap-1.5 text-[var(--color-text-secondary)] cursor-pointer">
+              <input type="checkbox" checked={multiline} onChange={(e) => setMultiline(e.target.checked)} className="accent-[var(--color-accent)]" />
+              Multi-line (files, certificates, kubeconfig)
+            </label>
           </div>
+          {multiline ? (
+            <textarea
+              placeholder="Paste file content (YAML, PEM, etc.)"
+              value={newValue}
+              onChange={(e) => setNewValue(e.target.value)}
+              rows={8}
+              spellCheck={false}
+              className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm font-mono text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)] resize-y"
+            />
+          ) : (
+            <div className="relative">
+              <input type={showValue ? "text" : "password"} placeholder="Value (API key, token, etc.)" value={newValue} onChange={(e) => setNewValue(e.target.value)} className="w-full px-3 py-2 pr-10 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]" />
+              <button onClick={() => setShowValue(!showValue)} className="absolute right-2 top-2 text-[var(--color-text-muted)]">
+                {showValue ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+          )}
+          <p className="text-xs text-[var(--color-text-muted)]">
+            Use {"`${SECRET_NAME}`"} for inline values, {"`${file:SECRET_NAME}`"} to write to a temp file (kubeconfig, certs).
+          </p>
           <button onClick={handleAdd} className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm font-medium">Save</button>
         </div>
       )}
