@@ -348,3 +348,43 @@ async def count_users() -> int:
 def is_available() -> bool:
     """Check if the database pool is initialized."""
     return _pool is not None
+
+
+# --- Secrets ---
+
+
+async def list_secrets() -> list[dict]:
+    """Return all secret keys (values masked)."""
+    pool = _pool_or_raise()
+    rows = await pool.fetch("SELECT key, created_at FROM secrets ORDER BY key")
+    return [{"key": r["key"], "created_at": r["created_at"].isoformat()} for r in rows]
+
+
+async def get_secret(key: str) -> str | None:
+    """Return a secret value by key, or None."""
+    pool = _pool_or_raise()
+    return await pool.fetchval("SELECT value FROM secrets WHERE key = $1", key)
+
+
+async def get_all_secrets() -> dict[str, str]:
+    """Return all secrets as a {key: value} dict (for substitution)."""
+    pool = _pool_or_raise()
+    rows = await pool.fetch("SELECT key, value FROM secrets")
+    return {r["key"]: r["value"] for r in rows}
+
+
+async def set_secret(key: str, value: str) -> None:
+    """Create or update a secret."""
+    pool = _pool_or_raise()
+    await pool.execute(
+        "INSERT INTO secrets (key, value) VALUES ($1, $2) "
+        "ON CONFLICT (key) DO UPDATE SET value = $2",
+        key, value,
+    )
+
+
+async def delete_secret(key: str) -> bool:
+    """Delete a secret. Returns True if it existed."""
+    pool = _pool_or_raise()
+    result = await pool.execute("DELETE FROM secrets WHERE key = $1", key)
+    return result == "DELETE 1"
