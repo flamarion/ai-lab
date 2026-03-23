@@ -576,11 +576,11 @@ elif st.session_state.page == "Settings":
         help="Let the model use tools (calculator, current time, MCP tools). Requires a tool-capable model (llama3.1, qwen3.5, gemma3).",
     )
 
-    # MCP server management — admin-only (these endpoints can execute commands)
+    # MCP server management + Secrets — admin-only
     if st.session_state.is_admin:
         st.divider()
         st.subheader("MCP Servers")
-        st.caption("MCP servers provide additional tools (web fetch, GitHub, etc.)")
+        st.caption("MCP servers provide additional tools. Use `${SECRET_NAME}` in configs to reference secrets.")
 
         # Show configured servers
         try:
@@ -591,10 +591,15 @@ elif st.session_state.page == "Settings":
                     for srv in servers:
                         status = "Connected" if srv["connected"] else "Disconnected"
                         tool_list = ", ".join(srv["tools"]) if srv["tools"] else "no tools"
+                        transport = srv.get("transport", "stdio")
+                        if transport == "http":
+                            detail = srv.get("url", "")
+                        else:
+                            detail = f"{srv.get('command', '')} {' '.join(srv.get('args', []))}"
                         col1, col2 = st.columns([4, 1])
                         with col1:
                             st.markdown(f"**{srv['name']}** — {status} ({tool_list})")
-                            st.caption(f"`{srv['command']} {' '.join(srv['args'])}`")
+                            st.caption(f"`{transport}: {detail}`")
                         with col2:
                             if st.button("Remove", key=f"mcp_rm_{srv['name']}", use_container_width=True):
                                 try:
@@ -611,53 +616,44 @@ elif st.session_state.page == "Settings":
         except Exception:
             st.warning("Could not fetch MCP server status")
 
-        # Add new server
+        # Add new server — JSON config (same format as Cursor / Claude Desktop)
         with st.expander("Add MCP server"):
-            mcp_name = st.text_input("Server name", placeholder="e.g. github", key="mcp_add_name")
-            mcp_command = st.text_input("Command", placeholder="e.g. docker", key="mcp_add_cmd")
-            mcp_args = st.text_input(
-                "Arguments (space-separated)",
-                placeholder="e.g. run -i --rm ghcr.io/github/github-mcp-server",
-                key="mcp_add_args",
+            mcp_name = st.text_input("Server name", placeholder="e.g. wandb", key="mcp_add_name")
+            mcp_json = st.text_area(
+                "Server config (JSON)",
+                height=150,
+                key="mcp_add_json",
+                placeholder='{\n  "transport": "http",\n  "url": "https://mcp.example.com/mcp",\n  "headers": {\n    "Authorization": "Bearer ${MY_API_KEY}"\n  }\n}',
             )
-            mcp_env = st.text_area(
-                "Environment variables (one per line: KEY=VALUE)",
-                placeholder="GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...\nANOTHER_VAR=value",
-                height=80,
-                key="mcp_add_env",
-            )
-            if st.button("Add server", use_container_width=True):
-                if mcp_name.strip() and mcp_command.strip():
-                    args_list = mcp_args.split() if mcp_args.strip() else []
-                    # Parse KEY=VALUE lines into a dict
-                    env_dict = {}
-                    for line in (mcp_env or "").strip().splitlines():
-                        line = line.strip()
-                        if "=" in line:
-                            k, v = line.split("=", 1)
-                            if k.strip():
-                                env_dict[k.strip()] = v.strip()
+            st.caption("Stdio example: `{\"command\": \"python\", \"args\": [\"-m\", \"mcp_server_fetch\"]}`")
+
+            if st.button("Add & validate", use_container_width=True):
+                if mcp_name.strip() and mcp_json.strip():
                     try:
-                        resp = httpx.post(
-                            f"{GATEWAY_URL}/mcp/servers",
-                            json={
-                                "admin_user_id": st.session_state.user_id,
-                                "name": mcp_name.strip(),
-                                "command": mcp_command.strip(),
-                                "args": args_list,
-                                "env": env_dict,
-                            },
-                            timeout=30.0,
-                        )
-                        if resp.status_code == 200:
-                            st.success(f"Added '{mcp_name.strip()}'")
-                            st.rerun()
-                        else:
-                            st.error(resp.json().get("detail", "Failed to add server"))
-                    except Exception as e:
-                        st.error(f"Error: {e}")
+                        config = json.loads(mcp_json)
+                    except json.JSONDecodeError as e:
+                        st.error(f"Invalid JSON: {e}")
+                        config = None
+                    if config:
+                        try:
+                            resp = httpx.post(
+                                f"{GATEWAY_URL}/mcp/servers",
+                                json={
+                                    "admin_user_id": st.session_state.user_id,
+                                    "name": mcp_name.strip(),
+                                    "config": config,
+                                },
+                                timeout=30.0,
+                            )
+                            if resp.status_code == 200:
+                                st.success(f"Added '{mcp_name.strip()}'")
+                                st.rerun()
+                            else:
+                                st.error(resp.json().get("detail", "Failed to add server"))
+                        except Exception as e:
+                            st.error(f"Error: {e}")
                 else:
-                    st.warning("Name and command are required")
+                    st.warning("Name and JSON config are required")
 
         if st.button("Restart MCP connections", use_container_width=True):
             try:
@@ -673,6 +669,65 @@ elif st.session_state.page == "Settings":
                     st.error("Restart failed")
             except Exception as e:
                 st.error(f"Error: {e}")
+
+        # Secrets management
+        st.divider()
+        st.subheader("Secrets")
+        st.caption("Store API keys and credentials. Reference them in MCP configs as `${SECRET_NAME}`.")
+
+        try:
+            sec_resp = httpx.get(
+                f"{GATEWAY_URL}/secrets",
+                params={"admin_user_id": st.session_state.user_id},
+                timeout=5.0,
+            )
+            if sec_resp.status_code == 200:
+                secrets = sec_resp.json().get("secrets", [])
+                if secrets:
+                    for sec in secrets:
+                        col1, col2 = st.columns([4, 1])
+                        with col1:
+                            st.code(f"${{{sec['key']}}}", language=None)
+                        with col2:
+                            if st.button("Delete", key=f"sec_del_{sec['key']}", use_container_width=True):
+                                try:
+                                    httpx.delete(
+                                        f"{GATEWAY_URL}/secrets/{sec['key']}",
+                                        params={"admin_user_id": st.session_state.user_id},
+                                        timeout=5.0,
+                                    )
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(str(e))
+                else:
+                    st.info("No secrets stored")
+        except Exception:
+            st.warning("Could not fetch secrets")
+
+        with st.expander("Add secret"):
+            sec_key = st.text_input("Key", placeholder="e.g. WANDB_API_KEY", key="sec_add_key")
+            sec_val = st.text_input("Value", type="password", key="sec_add_val")
+            if st.button("Save secret", use_container_width=True):
+                if sec_key.strip() and sec_val:
+                    try:
+                        resp = httpx.post(
+                            f"{GATEWAY_URL}/secrets",
+                            json={
+                                "admin_user_id": st.session_state.user_id,
+                                "key": sec_key.strip(),
+                                "value": sec_val,
+                            },
+                            timeout=5.0,
+                        )
+                        if resp.status_code == 200:
+                            st.success(f"Saved '{sec_key.strip()}'")
+                            st.rerun()
+                        else:
+                            st.error(resp.json().get("detail", "Failed"))
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+                else:
+                    st.warning("Key and value are required")
 
     st.divider()
     st.subheader("Upload Documents")

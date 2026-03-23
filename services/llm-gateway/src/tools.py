@@ -193,6 +193,70 @@ def current_time() -> str:
     return now.strftime("%Y-%m-%d %H:%M:%S UTC (%A)")
 
 
+# Conversion factors: from_unit → {to_unit: factor}
+# Temperature is handled separately (non-linear).
+_CONVERSIONS = {
+    # Length
+    "m": {"cm": 100, "mm": 1000, "km": 0.001, "in": 39.3701, "ft": 3.28084, "mi": 0.000621371},
+    "cm": {"m": 0.01, "mm": 10, "in": 0.393701, "ft": 0.0328084},
+    "km": {"m": 1000, "mi": 0.621371, "ft": 3280.84},
+    "mi": {"km": 1.60934, "m": 1609.34, "ft": 5280},
+    "ft": {"m": 0.3048, "cm": 30.48, "in": 12, "mi": 0.000189394},
+    "in": {"cm": 2.54, "mm": 25.4, "ft": 0.0833333, "m": 0.0254},
+    # Weight
+    "kg": {"g": 1000, "lb": 2.20462, "oz": 35.274},
+    "g": {"kg": 0.001, "lb": 0.00220462, "oz": 0.035274},
+    "lb": {"kg": 0.453592, "g": 453.592, "oz": 16},
+    "oz": {"g": 28.3495, "lb": 0.0625, "kg": 0.0283495},
+    # Volume
+    "l": {"ml": 1000, "gal": 0.264172, "qt": 1.05669},
+    "ml": {"l": 0.001, "oz_fl": 0.033814},
+    "gal": {"l": 3.78541, "qt": 4},
+}
+
+
+def unit_convert(value: float, from_unit: str, to_unit: str) -> str:
+    """Convert a value between units.
+
+    Supports length (m, cm, mm, km, mi, ft, in), weight (kg, g, lb, oz),
+    volume (l, ml, gal), and temperature (celsius, fahrenheit, kelvin).
+    """
+    f = from_unit.lower().strip()
+    t = to_unit.lower().strip()
+
+    if f == t:
+        return f"{value} {from_unit} = {value} {to_unit}"
+
+    # Temperature (non-linear conversions)
+    temp_units = {"celsius", "fahrenheit", "kelvin", "c", "f", "k"}
+    if f in temp_units and t in temp_units:
+        # Normalize aliases
+        f = {"c": "celsius", "f": "fahrenheit", "k": "kelvin"}.get(f, f)
+        t = {"c": "celsius", "f": "fahrenheit", "k": "kelvin"}.get(t, t)
+        if f == "celsius" and t == "fahrenheit":
+            r = value * 9 / 5 + 32
+        elif f == "celsius" and t == "kelvin":
+            r = value + 273.15
+        elif f == "fahrenheit" and t == "celsius":
+            r = (value - 32) * 5 / 9
+        elif f == "fahrenheit" and t == "kelvin":
+            r = (value - 32) * 5 / 9 + 273.15
+        elif f == "kelvin" and t == "celsius":
+            r = value - 273.15
+        elif f == "kelvin" and t == "fahrenheit":
+            r = (value - 273.15) * 9 / 5 + 32
+        else:
+            return f"Error: unsupported temperature conversion {from_unit} → {to_unit}"
+        return f"{value} {from_unit} = {round(r, 2)} {to_unit}"
+
+    # Linear conversions
+    if f in _CONVERSIONS and t in _CONVERSIONS.get(f, {}):
+        r = value * _CONVERSIONS[f][t]
+        return f"{value} {from_unit} = {round(r, 4)} {to_unit}"
+
+    return f"Error: unsupported conversion {from_unit} → {to_unit}"
+
+
 # ---------------------------------------------------------------------------
 # Tool registry — maps tool names to (function, schema)
 # ---------------------------------------------------------------------------
@@ -235,6 +299,38 @@ TOOL_REGISTRY: dict[str, dict] = {
                     "type": "object",
                     "properties": {},
                     "required": [],
+                },
+            },
+        },
+    },
+    "unit_convert": {
+        "fn": unit_convert,
+        "schema": {
+            "type": "function",
+            "function": {
+                "name": "unit_convert",
+                "description": (
+                    "Convert a value between units. Supports length (m, cm, mm, km, mi, ft, in), "
+                    "weight (kg, g, lb, oz), volume (l, ml, gal), and temperature "
+                    "(celsius, fahrenheit, kelvin). Use this when the user asks to convert units."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "value": {
+                            "type": "number",
+                            "description": "The numeric value to convert",
+                        },
+                        "from_unit": {
+                            "type": "string",
+                            "description": "The source unit (e.g. 'km', 'lb', 'celsius')",
+                        },
+                        "to_unit": {
+                            "type": "string",
+                            "description": "The target unit (e.g. 'mi', 'kg', 'fahrenheit')",
+                        },
+                    },
+                    "required": ["value", "from_unit", "to_unit"],
                 },
             },
         },

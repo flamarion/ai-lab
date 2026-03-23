@@ -5,26 +5,39 @@ Instead of hardcoding tools in tools.py, MCP servers provide tools via a
 standard protocol. This module manages connections to MCP servers and
 translates their tools into Ollama-compatible schemas.
 
-Servers are configured via mcp_servers.json (same format as Claude Desktop):
+Servers are configured via mcp_servers.json (same format as Claude Desktop / Cursor):
 
+    Stdio transport (local subprocess):
     {
         "mcpServers": {
             "fetch": {
                 "command": "python",
-                "args": ["-m", "mcp_server_fetch"],
-                "env": {}
+                "args": ["-m", "mcp_server_fetch"]
             }
         }
     }
 
-Each server is launched as a subprocess using stdio transport. Tools from
-all servers are merged with local tools from tools.py.
+    HTTP transport (remote server):
+    {
+        "mcpServers": {
+            "wandb": {
+                "transport": "http",
+                "url": "https://mcp.withwandb.com/mcp",
+                "headers": {
+                    "Authorization": "Bearer ${WANDB_API_KEY}"
+                }
+            }
+        }
+    }
+
+    Use ${SECRET_NAME} in env/headers to reference secrets stored in the DB.
 """
 
 import asyncio
 import json
 import logging
 import os
+import re
 from contextlib import AsyncExitStack
 from pathlib import Path
 
@@ -44,13 +57,15 @@ _CONNECT_TIMEOUT = 30
 # Minimal env vars passed to MCP subprocesses (avoid leaking secrets)
 _ENV_ALLOWLIST = {"PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR"}
 
+# Pattern for ${SECRET_NAME} substitution
+_SECRET_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
 
 class MCPClientManager:
     """Manages connections to multiple MCP servers.
 
-    On startup, reads mcp_servers.json and connects to each configured server.
-    Exposes their tools in Ollama-compatible format and routes tool calls
-    to the correct server. All state mutations are guarded by an asyncio.Lock.
+    Supports stdio (local subprocess) and HTTP (remote) transports.
+    Secrets from the DB can be referenced via ${SECRET_NAME} in configs.
     """
 
     def __init__(self):
@@ -58,6 +73,8 @@ class MCPClientManager:
         self._sessions: dict[str, ClientSession] = {}
         self._tools: dict[str, tuple[str, dict]] = {}
         self._lock = asyncio.Lock()
+        # Cache of secrets for substitution (loaded on start/reload)
+        self._secrets: dict[str, str] = {}
 
     async def start(self):
         """Connect to all configured MCP servers."""
@@ -66,11 +83,14 @@ class MCPClientManager:
             logger.info("No MCP servers configured")
             return
 
+        # Load secrets for ${...} substitution
+        await self._load_secrets()
+
         async with self._lock:
             for name, server_config in config.items():
                 try:
                     await asyncio.wait_for(
-                        self._connect_stdio(name, server_config),
+                        self._connect_server(name, server_config),
                         timeout=_CONNECT_TIMEOUT,
                     )
                 except asyncio.TimeoutError:
@@ -111,14 +131,14 @@ class MCPClientManager:
             json.dump(data, f, indent=2)
             f.write("\n")
 
-    def add_server(self, name: str, command: str, args: list[str], env: dict | None = None):
-        """Add a server to the config file (does not connect — call reload())."""
-        config = self._load_config()
-        config[name] = {"command": command, "args": args, "env": env or {}}
-        self.save_config(config)
+    def add_server_config(self, name: str, config: dict):
+        """Add a server config (full JSON object) to the config file."""
+        all_config = self._load_config()
+        all_config[name] = config
+        self.save_config(all_config)
 
     def remove_server(self, name: str) -> bool:
-        """Remove a server from the config file (does not disconnect — call reload())."""
+        """Remove a server from the config file."""
         config = self._load_config()
         if name not in config:
             return False
@@ -149,19 +169,25 @@ class MCPClientManager:
         """Return server info dicts for the /mcp/servers API endpoint."""
         config = self._load_config()
         connected = set(self._sessions.keys())
-        return [
-            {
+        results = []
+        for name, cfg in config.items():
+            transport = cfg.get("transport", "stdio")
+            info = {
                 "name": name,
-                "command": cfg.get("command", ""),
-                "args": cfg.get("args", []),
+                "transport": transport,
                 "connected": name in connected,
                 "tools": [
                     t_name for t_name, (s_name, _) in self._tools.items()
                     if s_name == name
                 ],
             }
-            for name, cfg in config.items()
-        ]
+            if transport == "http":
+                info["url"] = cfg.get("url", "")
+            else:
+                info["command"] = cfg.get("command", "")
+                info["args"] = cfg.get("args", [])
+            results.append(info)
+        return results
 
     def has_tool(self, name: str) -> bool:
         """Check if a tool is provided by an MCP server."""
@@ -190,10 +216,50 @@ class MCPClientManager:
             logger.error("MCP tool %s failed: %s", name, e)
             return f"Error calling {name}: {e}"
 
+    # --- Internal methods ---
+
+    def _substitute_secrets(self, value: str) -> str:
+        """Replace ${SECRET_NAME} placeholders with values from the secrets store."""
+        def _replace(match):
+            key = match.group(1)
+            if key in self._secrets:
+                return self._secrets[key]
+            logger.warning("Secret '${%s}' referenced but not found in secrets store", key)
+            return match.group(0)  # leave as-is if not found
+        return _SECRET_PATTERN.sub(_replace, value)
+
+    def _substitute_dict(self, d: dict) -> dict:
+        """Recursively substitute ${SECRET_NAME} in all string values of a dict."""
+        result = {}
+        for k, v in d.items():
+            if isinstance(v, str):
+                result[k] = self._substitute_secrets(v)
+            elif isinstance(v, dict):
+                result[k] = self._substitute_dict(v)
+            elif isinstance(v, list):
+                result[k] = [
+                    self._substitute_secrets(item) if isinstance(item, str) else item
+                    for item in v
+                ]
+            else:
+                result[k] = v
+        return result
+
+    async def _load_secrets(self):
+        """Load all secrets from the DB for substitution."""
+        try:
+            from src import db
+            if db.is_available():
+                self._secrets = await db.get_all_secrets()
+                if self._secrets:
+                    logger.info("Loaded %d secret(s) for MCP config substitution", len(self._secrets))
+        except Exception as e:
+            logger.warning("Could not load secrets: %s", e)
+            self._secrets = {}
+
     def _load_config(self) -> dict:
         """Load MCP server config from mcp_servers.json."""
         if not _CONFIG_PATH.exists():
-            logger.info("MCP config not found at %s", _CONFIG_PATH)
             return {}
         try:
             with open(_CONFIG_PATH) as f:
@@ -203,15 +269,21 @@ class MCPClientManager:
             logger.warning("Failed to load MCP config from %s: %s", _CONFIG_PATH, e)
             return {}
 
-    def _build_env(self, server_env: dict | None) -> dict:
-        """Build a minimal environment for MCP subprocesses.
+    async def _connect_server(self, name: str, config: dict):
+        """Connect to an MCP server — dispatches to stdio or HTTP transport."""
+        transport = config.get("transport", "stdio")
+        if transport == "http":
+            await self._connect_http(name, config)
+        else:
+            await self._connect_stdio(name, config)
 
-        Only passes allowlisted vars from the host + server-specific env vars.
-        Avoids leaking secrets (DB URLs, API keys) to MCP server processes.
-        """
+    def _build_env(self, server_env: dict | None) -> dict:
+        """Build a minimal environment for MCP subprocesses."""
         safe_env = {k: v for k, v in os.environ.items() if k in _ENV_ALLOWLIST}
         if server_env:
-            safe_env.update(server_env)
+            # Substitute secrets in env values
+            for k, v in server_env.items():
+                safe_env[k] = self._substitute_secrets(v) if isinstance(v, str) else v
         return safe_env
 
     async def _connect_stdio(self, name: str, config: dict):
@@ -230,7 +302,7 @@ class MCPClientManager:
             env=self._build_env(env),
         )
 
-        logger.info("Connecting to MCP server '%s': %s %s", name, command, " ".join(args))
+        logger.info("Connecting to MCP server '%s' (stdio): %s %s", name, command, " ".join(args))
 
         transport = await self._exit_stack.enter_async_context(
             stdio_client(server_params)
@@ -242,8 +314,45 @@ class MCPClientManager:
         await session.initialize()
 
         self._sessions[name] = session
+        await self._register_tools(name, session)
 
-        # Discover tools — detect and warn on name collisions
+    async def _connect_http(self, name: str, config: dict):
+        """Connect to an MCP server via HTTP (streamable HTTP) transport."""
+        url = config.get("url")
+        if not url:
+            logger.warning("MCP server '%s' has no URL, skipping", name)
+            return
+
+        headers = config.get("headers", {})
+        # Substitute secrets in headers (e.g. Authorization: Bearer ${API_KEY})
+        resolved_headers = {
+            k: self._substitute_secrets(v) if isinstance(v, str) else v
+            for k, v in headers.items()
+        }
+
+        logger.info("Connecting to MCP server '%s' (http): %s", name, url)
+
+        try:
+            from mcp.client.streamable_http import streamable_http_client
+
+            transport = await self._exit_stack.enter_async_context(
+                streamable_http_client(url, headers=resolved_headers)
+            )
+            read, write, _ = transport
+            session = await self._exit_stack.enter_async_context(
+                ClientSession(read, write)
+            )
+            await session.initialize()
+
+            self._sessions[name] = session
+            await self._register_tools(name, session)
+        except ImportError:
+            logger.warning("MCP HTTP transport not available — upgrade mcp package. Skipping '%s'", name)
+        except Exception as e:
+            raise  # re-raise so the caller logs the specific error
+
+    async def _register_tools(self, name: str, session: ClientSession):
+        """Discover tools from a connected session and register them."""
         from src import tools as local_tools
         local_names = set(local_tools.TOOL_REGISTRY.keys())
 
@@ -251,14 +360,14 @@ class MCPClientManager:
         for tool in response.tools:
             if tool.name in local_names:
                 logger.warning(
-                    "MCP tool '%s' from '%s' conflicts with local tool — local tool takes priority",
+                    "MCP tool '%s' from '%s' conflicts with local tool — local takes priority",
                     tool.name, name,
                 )
                 continue
             if tool.name in self._tools:
                 prev_server = self._tools[tool.name][0]
                 logger.warning(
-                    "MCP tool '%s' from '%s' conflicts with '%s' — keeping first registration",
+                    "MCP tool '%s' from '%s' conflicts with '%s' — keeping first",
                     tool.name, name, prev_server,
                 )
                 continue

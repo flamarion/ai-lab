@@ -468,9 +468,7 @@ async def list_tools():
 class AddMCPServerRequest(BaseModel):
     admin_user_id: str
     name: str
-    command: str
-    args: list[str] = Field(default_factory=list)
-    env: dict[str, str] = Field(default_factory=dict)
+    config: dict  # full server config JSON (same format as Cursor/Claude Desktop)
 
 
 class MCPAdminRequest(BaseModel):
@@ -479,26 +477,26 @@ class MCPAdminRequest(BaseModel):
 
 @app.get("/mcp/servers")
 async def list_mcp_servers():
-    """List configured MCP servers and their connection status."""
+    """List configured MCP servers with connection status and tools."""
     return {"servers": mcp_manager.list_servers()}
 
 
 @app.post("/mcp/servers")
 async def add_mcp_server(request: AddMCPServerRequest):
-    """Admin-only: add an MCP server to the config and reconnect."""
+    """Admin-only: add an MCP server to config and reconnect."""
     if not db.is_available():
         raise HTTPException(status_code=503, detail="Database not available")
     await _require_admin(request.admin_user_id)
     if not request.name.strip():
         raise HTTPException(status_code=400, detail="Server name is required")
-    mcp_manager.add_server(request.name.strip(), request.command, request.args, request.env)
+    mcp_manager.add_server_config(request.name.strip(), request.config)
     await mcp_manager.reload()
     return {"status": "added", "name": request.name}
 
 
 @app.delete("/mcp/servers/{name}")
 async def remove_mcp_server(name: str, admin_user_id: str = Query(...)):
-    """Admin-only: remove an MCP server from the config and reconnect."""
+    """Admin-only: remove an MCP server and reconnect."""
     if not db.is_available():
         raise HTTPException(status_code=503, detail="Database not available")
     await _require_admin(admin_user_id)
@@ -516,6 +514,52 @@ async def restart_mcp(request: MCPAdminRequest):
     await _require_admin(request.admin_user_id)
     await mcp_manager.reload()
     return {"status": "restarted", "tools": mcp_manager.get_tool_names()}
+
+
+# --- Secrets Management (admin-only) ---
+
+
+class SecretRequest(BaseModel):
+    admin_user_id: str
+    key: str
+    value: str
+
+
+class DeleteSecretRequest(BaseModel):
+    admin_user_id: str
+
+
+@app.get("/secrets")
+async def list_secrets_endpoint(admin_user_id: str = Query(...)):
+    """Admin-only: list secret keys (values are never exposed)."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(admin_user_id)
+    secrets = await db.list_secrets()
+    return {"secrets": secrets}
+
+
+@app.post("/secrets")
+async def set_secret_endpoint(request: SecretRequest):
+    """Admin-only: create or update a secret."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(request.admin_user_id)
+    if not request.key.strip():
+        raise HTTPException(status_code=400, detail="Key is required")
+    await db.set_secret(request.key.strip(), request.value)
+    return {"status": "saved", "key": request.key.strip()}
+
+
+@app.delete("/secrets/{key}")
+async def delete_secret_endpoint(key: str, admin_user_id: str = Query(...)):
+    """Admin-only: delete a secret."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(admin_user_id)
+    if not await db.delete_secret(key):
+        raise HTTPException(status_code=404, detail=f"Secret '{key}' not found")
+    return {"status": "deleted", "key": key}
 
 
 @app.post("/chat", response_model=ChatResponse)
