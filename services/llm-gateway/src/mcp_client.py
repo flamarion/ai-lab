@@ -274,9 +274,12 @@ class MCPClientManager:
                 return match.group(0)
             _SECRET_FILES_DIR.mkdir(parents=True, exist_ok=True)
             file_path = _SECRET_FILES_DIR / key
-            file_path.write_text(self._secrets[key])
-            file_path.chmod(0o600)  # restrict permissions
-            logger.info("Wrote secret '%s' to file %s", key, file_path)
+            # Normalize line endings (browser textareas may include \r)
+            # and strip trailing whitespace to keep YAML/PEM clean
+            content = self._secrets[key].replace("\r\n", "\n").replace("\r", "\n").rstrip()
+            file_path.write_text(content + "\n", encoding="utf-8")
+            file_path.chmod(0o600)
+            logger.info("Wrote secret '%s' to file %s (%d bytes)", key, file_path, len(content))
             return str(file_path)
 
         value = _FILE_SECRET_PATTERN.sub(_replace_file, value)
