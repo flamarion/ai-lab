@@ -145,6 +145,9 @@ def _load_preferences(prefs: dict):
     """Apply saved preferences to session state so all pages see them."""
     if not isinstance(prefs, dict):
         return
+    # Restore model/temperature so _save_preferences doesn't reset them
+    st.session_state["pref_model"] = prefs.get("model", _ADV_DEFAULTS["model"])
+    st.session_state["pref_temperature"] = prefs.get("temperature", _ADV_DEFAULTS["temperature"])
     for key in ("top_p", "num_predict", "system_prompt", "use_rag", "use_tools"):
         st.session_state[f"adv_{key}"] = prefs.get(key, _ADV_DEFAULTS[key])
 
@@ -456,10 +459,8 @@ if st.session_state.page == "Chat":
                     }
                     if selected_model:
                         payload["model"] = selected_model
-                    if top_p != 0.9:
-                        payload["top_p"] = top_p
-                    if num_predict != 1024:
-                        payload["num_predict"] = num_predict
+                    payload["top_p"] = top_p
+                    payload["num_predict"] = num_predict
                     if system_prompt.strip():
                         payload["system_prompt"] = system_prompt
                     if use_rag:

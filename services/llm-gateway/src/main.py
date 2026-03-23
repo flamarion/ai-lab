@@ -595,10 +595,14 @@ async def chat(request: ChatRequest):
     else:
         model, reason = router.select_model(request.message)
         # Override to a tool-capable model when tools are enabled.
-        # mistral:7b and llama3 silently ignore the tools parameter.
-        if request.use_tools and model in (settings.ROUTE_DEFAULT_MODEL,) and settings.ROUTE_TOOLS_MODEL:
-            logger.info("Model: %s → %s (auto — tools enabled, %s not tool-capable)",
-                        model, settings.ROUTE_TOOLS_MODEL, model)
+        # Only certain models support Ollama's tools API — others silently
+        # ignore the tools parameter. If the auto-selected model isn't the
+        # tools model itself, swap it.
+        if (request.use_tools
+                and settings.ROUTE_TOOLS_MODEL
+                and model != settings.ROUTE_TOOLS_MODEL):
+            logger.info("Model: %s → %s (auto — tools enabled, overriding to tool-capable model)",
+                        model, settings.ROUTE_TOOLS_MODEL)
             model = settings.ROUTE_TOOLS_MODEL
         else:
             logger.info("Model: %s (auto — %s)", model, reason)
