@@ -6,7 +6,7 @@ services:
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      - chat-ui
+      - web-ui
       - llm-gateway
     restart: unless-stopped
 
@@ -23,14 +23,25 @@ services:
       - DATABASE_URL=${DATABASE_URL:-postgresql://ailab:ailab_dev@192.168.1.202:5432/ailab}
     restart: unless-stopped
 
-  chat-ui:
+  web-ui:
     build:
-      context: ../../apps/chat-ui
+      context: ../../apps/web-ui
       dockerfile: Dockerfile
     expose:
-      - "8501"
-    environment:
-      - GATEWAY_URL=http://llm-gateway:8000
+      - "3000"
     depends_on:
       - llm-gateway
     restart: unless-stopped
+
+  # Legacy Streamlit UI — kept for reference, not started by default
+  # chat-ui:
+  #   build:
+  #     context: ../../apps/chat-ui
+  #     dockerfile: Dockerfile
+  #   expose:
+  #     - "8501"
+  #   environment:
+  #     - GATEWAY_URL=http://llm-gateway:8000
+  #   depends_on:
+  #     - llm-gateway
+  #   restart: unless-stopped
