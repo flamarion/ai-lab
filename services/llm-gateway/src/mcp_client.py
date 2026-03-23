@@ -109,10 +109,25 @@ class MCPClientManager:
     async def stop(self):
         """Disconnect from all MCP servers."""
         async with self._lock:
-            await self._exit_stack.aclose()
+            old_stack = self._exit_stack
             self._exit_stack = AsyncExitStack()
             self._sessions.clear()
             self._tools.clear()
+            # Try to close gracefully. This can fail with RuntimeError when
+            # called from a different task than the one that opened the
+            # connections (anyio TaskGroup affinity). Orphan subprocesses
+            # from failed cleanup are bounded (only on admin restart) and
+            # cleaned up on container restart.
+            try:
+                await old_stack.aclose()
+            except RuntimeError as exc:
+                logger.warning(
+                    "Cross-task MCP cleanup failed (anyio task affinity): %s. "
+                    "Old subprocesses may persist until container restart.",
+                    exc,
+                )
+            except Exception as exc:
+                logger.warning("MCP cleanup error: %s", exc, exc_info=True)
 
     async def reload(self):
         """Reconnect to all MCP servers (e.g. after config change)."""
