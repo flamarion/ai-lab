@@ -26,7 +26,7 @@ End goal: An agentic system running on homelab infrastructure.
 │                               │  │                        │
 │  Ollama :11434                │  │  Postgres :5432        │
 │  ├── mistral:7b               │  │  ├── conversations     │
-│  ├── qwen3.5:latest           │  │  └── messages          │
+│  ├── qwen3.5:27b              │  │  └── messages          │
 │  ├── llama3.1:8b              │  │                        │
 │  └── gemma3:12b               │  │                        │
 │                               │  │  Qdrant :6333  (P4)    │

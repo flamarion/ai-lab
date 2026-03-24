@@ -11,7 +11,7 @@ This is not about playing with models. It's about learning how **real AI systems
 - **Tool use** — local tools (calculator, unit converter, current time) + MCP servers (community tool ecosystem)
 - **MCP integration** — connect to any MCP server (stdio/HTTP/SSE). Admin UI for managing servers, Cursor-style JSON config, secrets store for credentials
 - **RAG pipeline** — ingest documents (PDF, DOCX, XLSX, text, code, config), chunk, embed, vector search via Qdrant
-- **Smart model routing** — code prompts route to qwen3.5, general prompts to mistral:7b, tool prompts to llama3.1 (override anytime)
+- **Smart model routing** — code/tool prompts route to qwen3.5:27b, general prompts to mistral:7b (override anytime)
 - **PIN-based auth** — per-user conversations, first user is auto-admin, child account flag
 - **Admin panel** — manage users, MCP servers, secrets store
 - **Settings persistence** — per-user preferences stored in Postgres JSONB
@@ -35,8 +35,8 @@ User → nginx (:80) → Next.js (web-ui:3000) → FastAPI (llm-gateway:8000) �
 
 | Host | Role | Details |
 |------|------|---------|
-| **GPU PC** (mato, 192.168.1.178) | Inference | Ollama :11434 — mistral:7b, qwen3.5, llama3.1:8b, gemma3:12b, nomic-embed-text-v2-moe. 2x RTX 3060 12GB (24GB total) |
-| **ai-app VM** (192.168.1.201, Proxmox) | Application | nginx + gateway + chat UI via Docker |
+| **GPU PC** (mato, 192.168.1.178) | Inference | Ollama :11434 — qwen3.5:27b, mistral:7b, llama3.1:8b, gemma3:12b, nomic-embed-text-v2-moe. 2x RTX 3060 12GB (24GB total) |
+| **ai-app VM** (192.168.1.201, Proxmox) | Application | nginx + gateway + web UI via Docker |
 | **ai-data VM** (192.168.1.202, Proxmox) | Data | Postgres :5432 + Qdrant :6333 via Docker |
 | **Ceph cluster** | Storage | 4TB — RBD block + S3 via RadosGW (available, not yet used) |
 
