@@ -262,20 +262,20 @@ These environment variables are set on the GPU PC (mato) via `sudo systemctl edi
 
 ```ini
 [Service]
-Environment="OLLAMA_CONTEXT_LENGTH=16384"
 Environment="OLLAMA_FLASH_ATTENTION=1"
-Environment="OLLAMA_KEEP_ALIVE=15m"
+Environment="OLLAMA_KEEP_ALIVE=5m"
 Environment="OLLAMA_KV_CACHE_TYPE=q8_0"
 Environment="OLLAMA_NO_CLOUD=1"
 ```
 
 | Variable | Value | Why |
 |----------|-------|-----|
-| `OLLAMA_CONTEXT_LENGTH` | `16384` | 4x default (4096). Allows longer conversations before truncation. |
 | `OLLAMA_FLASH_ATTENTION` | `1` | Faster inference + less VRAM usage on RTX 3060 (Ampere). |
-| `OLLAMA_KEEP_ALIVE` | `15m` | Keeps model in VRAM 15 min after last request. Avoids reload latency between messages. |
-| `OLLAMA_KV_CACHE_TYPE` | `q8_0` | Quantizes KV cache from f16 to q8. Roughly halves context memory, enabling 16k context on 12GB. |
+| `OLLAMA_KEEP_ALIVE` | `5m` | Keeps model in VRAM 5 min after last request. Short enough to free VRAM for model swaps (27B uses ~19GB). |
+| `OLLAMA_KV_CACHE_TYPE` | `q8_0` | Quantizes KV cache from f16 to q8. Roughly halves context memory, enabling 32k context on 24GB. |
 | `OLLAMA_NO_CLOUD` | `1` | Disables cloud/telemetry features. Fully local operation. |
+
+Note: `OLLAMA_CONTEXT_LENGTH` was removed — Ollama auto-detects 24GB VRAM and sets `default_num_ctx=32768` automatically.
 
 ## Tech Stack
 
