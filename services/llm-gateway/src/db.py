@@ -411,3 +411,65 @@ async def save_mcp_config(config: dict) -> None:
         "ON CONFLICT (id) DO UPDATE SET config = $1::jsonb, updated_at = now()",
         json.dumps(config),
     )
+
+
+# --- User Memory ---
+
+
+async def list_user_memories(user_id: str) -> list[dict]:
+    """Return all memory entries for a user."""
+    pool = _pool_or_raise()
+    rows = await pool.fetch(
+        "SELECT id, content, created_at, updated_at FROM user_memory "
+        "WHERE user_id = $1 ORDER BY created_at",
+        uuid.UUID(user_id),
+    )
+    return [
+        {
+            "id": str(r["id"]),
+            "content": r["content"],
+            "created_at": r["created_at"].isoformat(),
+            "updated_at": r["updated_at"].isoformat(),
+        }
+        for r in rows
+    ]
+
+
+async def get_user_memory_text(user_id: str) -> str:
+    """Return all memories for a user as a single text block for system prompt injection."""
+    pool = _pool_or_raise()
+    rows = await pool.fetch(
+        "SELECT content FROM user_memory WHERE user_id = $1 ORDER BY created_at",
+        uuid.UUID(user_id),
+    )
+    return "\n".join(r["content"] for r in rows)
+
+
+async def add_user_memory(user_id: str, content: str) -> str:
+    """Add a memory entry. Returns the new memory ID."""
+    pool = _pool_or_raise()
+    row = await pool.fetchrow(
+        "INSERT INTO user_memory (user_id, content) VALUES ($1, $2) RETURNING id",
+        uuid.UUID(user_id), content,
+    )
+    return str(row["id"])
+
+
+async def update_user_memory(memory_id: str, content: str) -> bool:
+    """Update a memory entry. Returns True if it existed."""
+    pool = _pool_or_raise()
+    result = await pool.execute(
+        "UPDATE user_memory SET content = $1, updated_at = now() WHERE id = $2",
+        content, uuid.UUID(memory_id),
+    )
+    return result == "UPDATE 1"
+
+
+async def delete_user_memory(memory_id: str) -> bool:
+    """Delete a memory entry. Returns True if it existed."""
+    pool = _pool_or_raise()
+    result = await pool.execute(
+        "DELETE FROM user_memory WHERE id = $1",
+        uuid.UUID(memory_id),
+    )
+    return result == "DELETE 1"
