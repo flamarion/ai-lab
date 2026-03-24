@@ -19,8 +19,9 @@ from src import db
 logger = logging.getLogger(__name__)
 
 # Conservative token budget — leave room for the model's response
-# and system prompt overhead. Ollama default is 16384.
-DEFAULT_CONTEXT_LIMIT = 14000  # tokens (out of 16k)
+# and system prompt overhead. Ollama auto-detected 24GB VRAM and
+# set default_num_ctx=32768.
+DEFAULT_CONTEXT_LIMIT = 28000  # tokens (out of 32k)
 SUMMARY_TRIGGER_RATIO = 0.7  # summarize when conversation uses 70% of budget
 MIN_MESSAGES_TO_SUMMARIZE = 6  # don't summarize very short conversations
 
