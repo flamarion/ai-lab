@@ -26,7 +26,7 @@ End goal: An agentic system running on homelab infrastructure.
 │                               │  │                        │
 │  Ollama :11434                │  │  Postgres :5432        │
 │  ├── mistral:7b               │  │  ├── conversations     │
-│  ├── qwen3.5:latest           │  │  └── messages          │
+│  ├── qwen3.5:27b              │  │  └── messages          │
 │  ├── llama3.1:8b              │  │                        │
 │  └── gemma3:12b               │  │                        │
 │                               │  │  Qdrant :6333  (P4)    │
@@ -313,6 +313,16 @@ Phase 6.5 hybrid tool architecture:
 - Memory: short-term (conversation) vs long-term (persisted)
 - Planning and reasoning strategies
 - When to stop: exit conditions and guardrails
+
+---
+
+### Phase 7.5 — Web Search (SearXNG or Ollama)
+**What you'll build:** Proper web search capability — either self-hosted SearXNG or Ollama's cloud search API
+**What you'll learn:**
+- SearXNG: self-hosted meta search engine (aggregates Google, Bing, DuckDuckGo). Docker container on ai-app VM, JSON API, no API keys needed. Fully local.
+- Ollama web search: cloud API with search + fetch. Simpler setup but requires Ollama API key and internet access to their proxy.
+- The current MCP `fetch` tool reads URLs but can't search — different problem. Search finds relevant URLs, fetch reads them.
+- Decision: SearXNG fits the local-first homelab philosophy. Ollama search is the easy path if external dependency is acceptable.
 
 ---
 

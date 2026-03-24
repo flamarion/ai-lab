@@ -16,7 +16,7 @@ Personal AI engineering lab for learning end-to-end AI system design. The goal i
 
 ## Infrastructure
 
-- **GPU PC** (192.168.1.178, hostname: mato): Ollama on port 11434 — serves mistral:7b, qwen3.5:latest, llama3.1:8b, gemma3:12b, llama3:latest. 2x RTX 3060 12GB (24GB total).
+- **GPU PC** (192.168.1.178, hostname: mato): Ollama on port 11434 — serves mistral:7b, qwen3.5:27b, llama3.1:8b, gemma3:12b. 2x RTX 3060 12GB (24GB total).
 - **ai-app VM** (192.168.1.201, Proxmox): Runs app services via Docker — gateway, chat UI, W&B Weave
 - **ai-data VM** (192.168.1.202, Proxmox): Data services — Postgres (conversation persistence), Qdrant (vector search for RAG)
 - **Ceph cluster**: 4TB — RBD block storage + S3 via RadosGW
@@ -254,7 +254,7 @@ Only tool-capable models work: llama3.1, qwen3.5, gemma3. mistral:7b and llama3 
 - **Cross-VM communication**: Services discover each other via LAN IP:port in env vars (same pattern for Ollama and Postgres).
 - **Pass-through options**: The gateway validates and builds an Ollama options dict (temperature, top_p, num_predict); `OllamaClient.chat()` forwards it as-is. Adding a new Ollama option only requires a change to `ChatRequest` and the dict-building code — the client never changes.
 - **PIN-based auth**: Users register with username + 4-8 digit PIN (bcrypt hashed). First registered user is auto-admin. Per-user conversations — each user sees only their own. Admin panel for user management (reset PINs, toggle admin, delete users). Settings (model, temperature) persist per-user as JSONB in the users table.
-- **Smart model routing**: When "Auto" is selected (no explicit model in request), the gateway's `router.py` classifies the prompt via keyword matching and picks the best model. Code/technical prompts route to `ROUTE_CODE_MODEL` (qwen3.5), everything else to `ROUTE_DEFAULT_MODEL` (mistral). The selected model and reason are logged for observability. Users can always override by picking a specific model in the dropdown.
+- **Smart model routing**: When "Auto" is selected (no explicit model in request), the gateway's `router.py` classifies the prompt via keyword matching and picks the best model. Code/technical prompts route to `ROUTE_CODE_MODEL` (qwen3.5:27b), everything else to `ROUTE_DEFAULT_MODEL` (mistral). When tools are enabled, auto-selected models are overridden to `ROUTE_TOOLS_MODEL` (qwen3.5:27b). The selected model and reason are logged for observability. Users can always override by picking a specific model in the dropdown.
 
 ## Ollama Server Tuning
 

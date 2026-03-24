@@ -226,6 +226,29 @@ export const secrets = {
     request(`/secrets/${key}?admin_user_id=${adminUserId}`, { method: "DELETE" }),
 };
 
+// --- Memory ---
+
+export interface Memory {
+  id: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export const memory = {
+  list: (userId: string) =>
+    request<{ memories: Memory[] }>(`/memory?user_id=${userId}`),
+
+  add: (userId: string, content: string) =>
+    request<{ status: string; id: string }>("/memory", {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId, content }),
+    }),
+
+  delete: (memoryId: string, userId: string) =>
+    request(`/memory/${memoryId}?user_id=${userId}`, { method: "DELETE" }),
+};
+
 // --- Documents ---
 
 export const documents = {

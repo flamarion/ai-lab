@@ -17,7 +17,7 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
     sys.path.insert(0, _shared_path)
 
 from ai_lab_common.config import settings
-from src import chunker, db, migrations, router, tools, vector_store
+from src import chunker, context, db, migrations, router, tools, vector_store
 from src.mcp_client import mcp_manager
 from src.ollama_client import OllamaClient
 
@@ -606,6 +606,48 @@ async def delete_secret_endpoint(key: str, admin_user_id: str = Query(...)):
     return {"status": "deleted", "key": key}
 
 
+# --- User Memory ---
+
+
+class MemoryRequest(BaseModel):
+    user_id: str
+    content: str
+
+
+@app.get("/memory")
+async def list_memories(user_id: str = Query(...)):
+    """List all memory entries for a user."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    _validate_uuid(user_id)
+    memories = await db.list_user_memories(user_id)
+    return {"memories": memories}
+
+
+@app.post("/memory")
+async def add_memory(request: MemoryRequest):
+    """Add a memory entry for a user (e.g. 'I prefer concise responses')."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    _validate_uuid(request.user_id)
+    if not request.content.strip():
+        raise HTTPException(status_code=400, detail="Content is required")
+    memory_id = await db.add_user_memory(request.user_id, request.content.strip())
+    return {"status": "saved", "id": memory_id}
+
+
+@app.delete("/memory/{memory_id}")
+async def delete_memory(memory_id: str, user_id: str = Query(...)):
+    """Delete a memory entry (enforces ownership via user_id)."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    _validate_uuid(memory_id)
+    _validate_uuid(user_id)
+    if not await db.delete_user_memory(memory_id, user_id):
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"status": "deleted"}
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     # Model selection: explicit choice from user, or smart routing
@@ -636,38 +678,36 @@ async def chat(request: ChatRequest):
     else:
         messages = list(request.history)
 
-    # Build a single system message from user prompt + RAG context.
-    # Models only honour the first system message, so we merge them.
-    system_parts = []
-
-    if request.system_prompt and request.system_prompt.strip():
-        system_parts.append(request.system_prompt.strip())
-
-    # RAG: retrieve relevant context
+    # RAG: retrieve relevant context (before building system prompt)
+    rag_context = None
     if request.use_rag and vector_store.is_available():
         try:
             query_text = f"search_query: {request.message}"
             query_vectors = await client.embed([query_text])
             results = vector_store.search(query_vectors[0], limit=5)
-
             if results:
-                context_parts = []
-                for r in results:
-                    source = r.get("source", "unknown")
-                    context_parts.append(f"[{source}]\n{r['text']}")
-                context = "\n---\n".join(context_parts)
-
-                system_parts.append(_RAG_SYSTEM_PROMPT.format(context=context))
+                parts = [f"[{r.get('source', 'unknown')}]\n{r['text']}" for r in results]
+                rag_context = _RAG_SYSTEM_PROMPT.format(context="\n---\n".join(parts))
                 logger.info("RAG: injected %d chunks into prompt", len(results))
-            else:
-                logger.info("RAG: no relevant chunks found")
         except Exception as e:
             logger.warning("RAG search failed, proceeding without context: %s", e)
 
-    if system_parts:
-        messages.insert(0, {"role": "system", "content": "\n\n".join(system_parts)})
+    # Build system prompt: agent instructions + memory + custom prompt + RAG
+    system_prompt = await context.build_system_prompt(
+        user_id=request.user_id,
+        user_system_prompt=request.system_prompt,
+        rag_context=rag_context,
+        use_tools=request.use_tools,
+    )
+    if system_prompt:
+        messages.insert(0, {"role": "system", "content": system_prompt})
 
     messages.append({"role": "user", "content": request.message})
+
+    # Summarize if conversation is getting long (preserves early context)
+    if context.should_summarize(messages):
+        logger.info("Conversation approaching context limit — summarizing")
+        messages = await context.summarize_conversation(messages, client, model)
 
     # Build Ollama options (only include non-default values)
     options: dict = {"temperature": request.temperature}
@@ -680,6 +720,8 @@ async def chat(request: ChatRequest):
     tools_used = []
     try:
         if request.use_tools:
+            # Set user context for save_memory tool
+            tools._current_user_id = request.user_id
             response_text, tools_used = await client.chat_with_tools(
                 model=model,
                 messages=messages,
@@ -707,11 +749,21 @@ async def chat(request: ChatRequest):
         except Exception as e:
             logger.warning("Failed to persist conversation: %s", e)
 
-    # Generate a smart title in the background for new conversations
+    # Background tasks
     if is_new_conversation and db.is_available():
         asyncio.create_task(
             _generate_title(conversation_id, request.message, response_text, model)
         )
+
+    # Extract memories periodically (every 6 user/assistant turns)
+    if request.user_id and db.is_available():
+        turn_count = sum(1 for m in messages if m.get("role") in ("user", "assistant"))
+        # Include the just-generated response for extraction
+        extraction_messages = messages + [{"role": "assistant", "content": response_text}]
+        if turn_count >= 6 and turn_count % 6 == 0:
+            asyncio.create_task(
+                context.extract_memories(extraction_messages, client, model, request.user_id)
+            )
 
     return ChatResponse(
         response=response_text,

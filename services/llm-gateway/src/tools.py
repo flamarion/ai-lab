@@ -193,6 +193,43 @@ def current_time() -> str:
     return now.strftime("%Y-%m-%d %H:%M:%S UTC (%A)")
 
 
+# Global reference set by main.py before tool calls — allows save_memory
+# to access the current user_id without threading it through the tool interface.
+_current_user_id: str | None = None
+
+
+def save_memory(fact: str) -> str:
+    """Save a fact about the user for future conversations.
+
+    Use this when the user explicitly asks you to remember something,
+    or when you learn an important preference or fact about them.
+    """
+    import asyncio
+    from src import db
+
+    if not _current_user_id:
+        return "Error: no user context available"
+    if not fact.strip():
+        return "Error: empty fact"
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # We're in a threadpool (called from execute_tool via run_in_executor)
+            # Create a coroutine and run it in the event loop
+            import concurrent.futures
+            future = asyncio.run_coroutine_threadsafe(
+                db.add_user_memory(_current_user_id, fact.strip()),
+                loop,
+            )
+            future.result(timeout=5)
+        else:
+            asyncio.run(db.add_user_memory(_current_user_id, fact.strip()))
+        return f"Remembered: {fact.strip()}"
+    except Exception as e:
+        return f"Error saving memory: {e}"
+
+
 # Conversion factors: from_unit → {to_unit: factor}
 # Temperature is handled separately (non-linear).
 _CONVERSIONS = {
@@ -334,6 +371,31 @@ TOOL_REGISTRY: dict[str, dict] = {
                         },
                     },
                     "required": ["value", "from_unit", "to_unit"],
+                },
+            },
+        },
+    },
+    "save_memory": {
+        "fn": save_memory,
+        "schema": {
+            "type": "function",
+            "function": {
+                "name": "save_memory",
+                "description": (
+                    "Save a fact about the user for future conversations. "
+                    "Use this when the user says 'remember that...' or when you learn "
+                    "an important preference, background detail, or decision. "
+                    "The fact will be available in all future conversations."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "fact": {
+                            "type": "string",
+                            "description": "The fact to remember (e.g. 'User prefers concise responses')",
+                        },
+                    },
+                    "required": ["fact"],
                 },
             },
         },

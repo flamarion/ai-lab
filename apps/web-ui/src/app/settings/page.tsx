@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth } from "@/lib/auth-context";
-import { chat as chatApi, documents as docsApi, auth as authApi } from "@/lib/api";
+import { chat as chatApi, documents as docsApi, auth as authApi, memory as memApi, type Memory } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ArrowLeft, Upload, Trash2, FileText } from "lucide-react";
@@ -24,6 +24,8 @@ export default function SettingsPage() {
   const [systemPrompt, setSystemPrompt] = useState((prefs.system_prompt as string) || "");
   const [useRag, setUseRag] = useState((prefs.use_rag as boolean) ?? false);
   const [useTools, setUseTools] = useState((prefs.use_tools as boolean) ?? false);
+  const [memories, setMemories] = useState<Memory[]>([]);
+  const [newMemory, setNewMemory] = useState("");
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
@@ -32,7 +34,8 @@ export default function SettingsPage() {
   useEffect(() => {
     chatApi.models().then((d) => setModels(d.models)).catch(() => {});
     docsApi.list().then((d) => setDocs(d.documents)).catch(() => {});
-  }, []);
+    if (user) memApi.list(user.user_id).then((d) => setMemories(d.memories)).catch(() => {});
+  }, [user]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -165,6 +168,56 @@ export default function SettingsPage() {
           <div className="space-y-3">
             <Toggle label="Use documents (RAG)" description="Ground answers in your uploaded documents" checked={useRag} onChange={setUseRag} />
             <Toggle label="Use tools" description="Calculator, unit converter, web fetch, MCP tools. Requires llama3.1, qwen3.5, or gemma3." checked={useTools} onChange={setUseTools} />
+          </div>
+        </Section>
+
+        {/* Memory */}
+        <Section title="Memory">
+          <p className="text-xs text-[var(--color-text-muted)] mb-3">
+            Facts the AI remembers about you across conversations. The AI can also learn new things automatically.
+          </p>
+          {memories.map((m) => (
+            <div key={m.id} className="flex items-start gap-2 px-3 py-2 rounded-lg bg-[var(--color-bg-secondary)] text-sm mb-1.5">
+              <span className="flex-1">{m.content}</span>
+              <button
+                onClick={async () => {
+                  await memApi.delete(m.id, user!.user_id);
+                  setMemories((prev) => prev.filter((x) => x.id !== m.id));
+                }}
+                className="text-[var(--color-text-muted)] hover:text-[var(--color-error)] shrink-0 mt-0.5"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+          <div className="flex gap-2 mt-2">
+            <input
+              type="text"
+              value={newMemory}
+              onChange={(e) => setNewMemory(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newMemory.trim() && user) {
+                  memApi.add(user.user_id, newMemory.trim()).then((r) => {
+                    setMemories((prev) => [...prev, { id: r.id, content: newMemory.trim(), created_at: "", updated_at: "" }]);
+                    setNewMemory("");
+                  });
+                }
+              }}
+              placeholder="e.g. I prefer concise responses"
+              className="flex-1 px-3 py-2 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
+            />
+            <button
+              onClick={async () => {
+                if (!newMemory.trim() || !user) return;
+                const r = await memApi.add(user.user_id, newMemory.trim());
+                setMemories((prev) => [...prev, { id: r.id, content: newMemory.trim(), created_at: "", updated_at: "" }]);
+                setNewMemory("");
+              }}
+              disabled={!newMemory.trim()}
+              className="px-3 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm disabled:opacity-30"
+            >
+              Add
+            </button>
           </div>
         </Section>
 
