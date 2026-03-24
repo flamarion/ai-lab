@@ -465,11 +465,17 @@ async def update_user_memory(memory_id: str, content: str) -> bool:
     return result == "UPDATE 1"
 
 
-async def delete_user_memory(memory_id: str) -> bool:
-    """Delete a memory entry. Returns True if it existed."""
+async def delete_user_memory(memory_id: str, user_id: str | None = None) -> bool:
+    """Delete a memory entry. If user_id is provided, enforces ownership."""
     pool = _pool_or_raise()
-    result = await pool.execute(
-        "DELETE FROM user_memory WHERE id = $1",
-        uuid.UUID(memory_id),
-    )
+    if user_id:
+        result = await pool.execute(
+            "DELETE FROM user_memory WHERE id = $1 AND user_id = $2",
+            uuid.UUID(memory_id), uuid.UUID(user_id),
+        )
+    else:
+        result = await pool.execute(
+            "DELETE FROM user_memory WHERE id = $1",
+            uuid.UUID(memory_id),
+        )
     return result == "DELETE 1"

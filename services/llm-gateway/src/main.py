@@ -638,11 +638,12 @@ async def add_memory(request: MemoryRequest):
 
 @app.delete("/memory/{memory_id}")
 async def delete_memory(memory_id: str, user_id: str = Query(...)):
-    """Delete a memory entry."""
+    """Delete a memory entry (enforces ownership via user_id)."""
     if not db.is_available():
         raise HTTPException(status_code=503, detail="Database not available")
     _validate_uuid(memory_id)
-    if not await db.delete_user_memory(memory_id):
+    _validate_uuid(user_id)
+    if not await db.delete_user_memory(memory_id, user_id):
         raise HTTPException(status_code=404, detail="Memory not found")
     return {"status": "deleted"}
 
@@ -751,11 +752,15 @@ async def chat(request: ChatRequest):
             _generate_title(conversation_id, request.message, response_text, model)
         )
 
-    # Extract memories periodically (every 6 messages in a conversation)
-    if request.user_id and db.is_available() and len(messages) % 6 == 0 and len(messages) >= 6:
-        asyncio.create_task(
-            context.extract_memories(messages, client, model, request.user_id)
-        )
+    # Extract memories periodically (every 6 user/assistant turns)
+    if request.user_id and db.is_available():
+        turn_count = sum(1 for m in messages if m.get("role") in ("user", "assistant"))
+        # Include the just-generated response for extraction
+        extraction_messages = messages + [{"role": "assistant", "content": response_text}]
+        if turn_count >= 6 and turn_count % 6 == 0:
+            asyncio.create_task(
+                context.extract_memories(extraction_messages, client, model, request.user_id)
+            )
 
     return ChatResponse(
         response=response_text,
