@@ -22,8 +22,10 @@ else:
 
 
 class OllamaClient:
-    def __init__(self, base_url: str, timeout: float = 300.0):
+    def __init__(self, base_url: str, timeout: float | None = None):
         self.base_url = base_url.rstrip("/")
+        # No timeout — 27B model cold starts (loading across 2 GPUs) and
+        # long generations on 32k context can take several minutes.
         self.http = httpx.AsyncClient(base_url=self.base_url, timeout=timeout)
 
     @_trace
