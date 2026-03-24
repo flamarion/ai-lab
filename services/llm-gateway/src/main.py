@@ -692,11 +692,12 @@ async def chat(request: ChatRequest):
         except Exception as e:
             logger.warning("RAG search failed, proceeding without context: %s", e)
 
-    # Build system prompt: user memory + custom prompt + RAG context
+    # Build system prompt: agent instructions + memory + custom prompt + RAG
     system_prompt = await context.build_system_prompt(
         user_id=request.user_id,
         user_system_prompt=request.system_prompt,
         rag_context=rag_context,
+        use_tools=request.use_tools,
     )
     if system_prompt:
         messages.insert(0, {"role": "system", "content": system_prompt})
@@ -719,6 +720,8 @@ async def chat(request: ChatRequest):
     tools_used = []
     try:
         if request.use_tools:
+            # Set user context for save_memory tool
+            tools._current_user_id = request.user_id
             response_text, tools_used = await client.chat_with_tools(
                 model=model,
                 messages=messages,

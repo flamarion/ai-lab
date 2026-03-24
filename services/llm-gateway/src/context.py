@@ -24,6 +24,20 @@ DEFAULT_CONTEXT_LIMIT = 14000  # tokens (out of 16k)
 SUMMARY_TRIGGER_RATIO = 0.7  # summarize when conversation uses 70% of budget
 MIN_MESSAGES_TO_SUMMARIZE = 6  # don't summarize very short conversations
 
+# Agent system prompt — injected when tools are enabled to make the model
+# reason about what to do before acting. This is the core "agent" behavior.
+AGENT_SYSTEM_PROMPT = (
+    "You are an AI assistant with access to tools. Follow these principles:\n\n"
+    "1. THINK before acting — consider what information you need and which tools can help.\n"
+    "2. USE TOOLS when you need current information, calculations, conversions, or web content. "
+    "Don't guess when you can look it up.\n"
+    "3. CHAIN STEPS — you can call multiple tools in sequence. After each tool result, "
+    "decide if you need more information or can answer.\n"
+    "4. BE HONEST — if tools don't return useful results, say so. Don't make up data.\n"
+    "5. CITE SOURCES — when using tool results, mention where the information came from.\n\n"
+    "If the user asks you to remember something, confirm that you'll remember it."
+)
+
 # System prompt for the summarizer
 _SUMMARIZE_PROMPT = (
     "Summarize this conversation so far in 2-3 concise paragraphs. "
@@ -58,13 +72,18 @@ async def build_system_prompt(
     user_id: str | None,
     user_system_prompt: str | None,
     rag_context: str | None,
+    use_tools: bool = False,
 ) -> str | None:
-    """Build the system prompt with user memory + custom prompt + RAG context.
+    """Build the system prompt with agent instructions + memory + custom prompt + RAG.
 
-    Memory is injected first so the model always has user context,
-    then the user's custom system prompt, then RAG context.
+    Order matters — agent instructions first (behavioral), then memory (personalization),
+    then custom prompt (user override), then RAG context (grounding).
     """
     parts = []
+
+    # 0. Agent behavior (when tools are enabled)
+    if use_tools:
+        parts.append(AGENT_SYSTEM_PROMPT)
 
     # 1. User memory (cross-conversation persistence)
     if user_id and db.is_available():
