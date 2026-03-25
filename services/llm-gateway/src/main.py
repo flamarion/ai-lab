@@ -93,13 +93,20 @@ async def lifespan(app: FastAPI):
 
     client = OllamaClient(settings.OLLAMA_HOST)
 
-    # --- MCP server connections ---
-    try:
-        await mcp_manager.start()
-    except Exception as e:
-        logger.warning("MCP initialization failed: %s — MCP tools unavailable.", e)
+    # --- MCP server connections (non-blocking) ---
+    # Start MCP connections in the background so the gateway can serve
+    # requests immediately. MCP tools become available once connected.
+    async def _start_mcp():
+        try:
+            await mcp_manager.start()
+        except Exception as e:
+            logger.warning("MCP initialization failed: %s — MCP tools unavailable.", e)
+
+    mcp_task = asyncio.create_task(_start_mcp())
 
     yield
+
+    mcp_task.cancel()
     await mcp_manager.stop()
     await client.close()
     await db.close_pool()
