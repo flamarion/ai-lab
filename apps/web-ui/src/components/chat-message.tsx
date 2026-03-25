@@ -93,69 +93,59 @@ export default function ChatMessage({ role, content, toolsUsed, isStreaming }: P
           </div>
         )}
 
-        {/* Message content — rendered as markdown for assistant, plain for user */}
+        {/* Message content — rendered as markdown for both user and assistant */}
         <div className="message-content text-[0.9375rem] leading-relaxed">
-          {role === "assistant" ? (
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                // Code blocks with syntax label + copy button
-                code({ className, children, ...props }) {
-                  const isBlock = className || String(children).includes("\n");
-                  if (isBlock) {
-                    return <CodeBlock className={className}>{children}</CodeBlock>;
-                  }
-                  // Inline code
-                  return (
-                    <code className="font-[var(--font-mono)] text-[0.85em] bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 rounded" {...props}>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              code({ className, children, ...props }) {
+                const isBlock = className || String(children).includes("\n");
+                if (isBlock) {
+                  return <CodeBlock className={className}>{children}</CodeBlock>;
+                }
+                return (
+                  <code className="font-[var(--font-mono)] text-[0.85em] bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 rounded" {...props}>
+                    {children}
+                  </code>
+                );
+              },
+              pre({ children }) {
+                return <>{children}</>;
+              },
+              table({ children }) {
+                return (
+                  <div className="overflow-x-auto my-3">
+                    <table className="w-full text-sm border-collapse border border-[var(--color-border)]">
                       {children}
-                    </code>
-                  );
-                },
-                // Remove wrapping <pre> since CodeBlock handles it
-                pre({ children }) {
-                  return <>{children}</>;
-                },
-                // Tables
-                table({ children }) {
-                  return (
-                    <div className="overflow-x-auto my-3">
-                      <table className="w-full text-sm border-collapse border border-[var(--color-border)]">
-                        {children}
-                      </table>
-                    </div>
-                  );
-                },
-                th({ children }) {
-                  return (
-                    <th className="border border-[var(--color-border)] px-3 py-2 bg-[var(--color-bg-secondary)] text-left font-medium">
-                      {children}
-                    </th>
-                  );
-                },
-                td({ children }) {
-                  return (
-                    <td className="border border-[var(--color-border)] px-3 py-2">
-                      {children}
-                    </td>
-                  );
-                },
-                // Links open in new tab
-                a({ href, children }) {
-                  return (
-                    <a href={href} target="_blank" rel="noopener noreferrer" className="text-[var(--color-accent)] underline underline-offset-2 hover:text-[var(--color-accent-hover)]">
-                      {children}
-                    </a>
-                  );
-                },
-              }}
-            >
-              {content}
-            </ReactMarkdown>
-          ) : (
-            // User messages as plain text (preserve whitespace)
-            <span className="whitespace-pre-wrap">{content}</span>
-          )}
+                    </table>
+                  </div>
+                );
+              },
+              th({ children }) {
+                return (
+                  <th className="border border-[var(--color-border)] px-3 py-2 bg-[var(--color-bg-secondary)] text-left font-medium">
+                    {children}
+                  </th>
+                );
+              },
+              td({ children }) {
+                return (
+                  <td className="border border-[var(--color-border)] px-3 py-2">
+                    {children}
+                  </td>
+                );
+              },
+              a({ href, children }) {
+                return (
+                  <a href={href} target="_blank" rel="noopener noreferrer" className="text-[var(--color-accent)] underline underline-offset-2 hover:text-[var(--color-accent-hover)]">
+                    {children}
+                  </a>
+                );
+              },
+            }}
+          >
+            {content}
+          </ReactMarkdown>
         </div>
 
         {/* Streaming indicator */}
