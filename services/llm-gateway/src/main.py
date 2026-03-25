@@ -783,19 +783,40 @@ async def chat_stream(request: ChatRequest):
             if request.num_predict is not None:
                 options["num_predict"] = request.num_predict
 
-            # Status callback for tool use
-            async def _on_status(status: str, detail: str):
-                # This is called from chat_with_tools during tool execution
-                pass  # Can't yield from a callback — we use a queue instead
-
             yield f"event: status\ndata: {_json.dumps({'status': 'thinking', 'detail': f'Asking {model}...'})}\n\n"
 
+            # For tool use: run chat in a background task and consume
+            # status events via a queue (can't yield from inside await)
             tools_used = []
             if request.use_tools:
                 tools._current_user_id = request.user_id
-                response_text, tools_used = await client.chat_with_tools(
-                    model=model, messages=messages, options=options,
-                )
+                status_queue: asyncio.Queue = asyncio.Queue()
+
+                async def _on_status(status: str, detail: str):
+                    await status_queue.put({"status": status, "detail": detail})
+
+                async def _run_chat():
+                    return await client.chat_with_tools(
+                        model=model, messages=messages, options=options,
+                        on_status=_on_status,
+                    )
+
+                chat_task = asyncio.create_task(_run_chat())
+
+                # Yield status events as they come in while chat is running
+                while not chat_task.done():
+                    try:
+                        event = await asyncio.wait_for(status_queue.get(), timeout=0.5)
+                        yield f"event: status\ndata: {_json.dumps(event)}\n\n"
+                    except asyncio.TimeoutError:
+                        pass  # No event yet, check if task is done
+
+                # Drain any remaining events
+                while not status_queue.empty():
+                    event = await status_queue.get()
+                    yield f"event: status\ndata: {_json.dumps(event)}\n\n"
+
+                response_text, tools_used = chat_task.result()
                 if tools_used:
                     logger.info("Tools used: %s", [t["name"] for t in tools_used])
             else:
