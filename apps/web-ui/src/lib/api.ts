@@ -218,11 +218,6 @@ export const mcp = {
       body: JSON.stringify({ admin_user_id: adminUserId }),
     }),
 
-  startOAuth: (adminUserId: string, serverName: string) =>
-    request<{ auth_url: string }>("/oauth/start", {
-      method: "POST",
-      body: JSON.stringify({ admin_user_id: adminUserId, server_name: serverName }),
-    }),
 };
 
 // --- Secrets ---

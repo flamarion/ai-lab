@@ -324,7 +324,7 @@ Phase 6.5 hybrid tool architecture:
 - When to stop: exit conditions and guardrails
 
 - Per-chat RAG/tools toggles: pill buttons in chat input bar override Settings defaults per conversation
-- OAuth 2.0 for MCP: browser-based auth flow (PKCE) for services like Granola. Token stored as secret.
+- OAuth MCP servers: use `mcp-remote` proxy (npm package) for services like Granola, Notion, Atlassian that require browser-based OAuth. Config: `{"command": "npx", "args": ["-y", "mcp-remote", "https://mcp.granola.ai/mcp", "--callback-port", "9102"]}`
 
 **Remaining work:**
 - Per-user document scoping (user-specific vs shared documents)

@@ -17,7 +17,7 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
     sys.path.insert(0, _shared_path)
 
 from ai_lab_common.config import settings
-from src import chunker, context, db, migrations, oauth, router, tools, vector_store
+from src import chunker, context, db, migrations, router, tools, vector_store
 from src.mcp_client import mcp_manager
 from src.ollama_client import OllamaClient
 
@@ -625,71 +625,6 @@ async def restart_mcp(request: MCPAdminRequest):
     await _require_admin(request.admin_user_id)
     await mcp_manager.reload()
     return {"status": "restarted", "tools": mcp_manager.get_tool_names()}
-
-
-# --- OAuth for MCP servers ---
-
-
-class OAuthStartRequest(BaseModel):
-    admin_user_id: str
-    server_name: str
-
-
-@app.post("/oauth/start")
-async def oauth_start(request: OAuthStartRequest):
-    """Admin-only: start OAuth flow for an MCP server. Returns the auth URL to open in browser."""
-    if not db.is_available():
-        raise HTTPException(status_code=503, detail="Database not available")
-    await _require_admin(request.admin_user_id)
-
-    config = await mcp_manager.get_config()
-    server_config = config.get(request.server_name)
-    if not server_config:
-        raise HTTPException(status_code=404, detail=f"Server '{request.server_name}' not found")
-
-    oauth_config = server_config.get("oauth")
-    if not oauth_config:
-        raise HTTPException(status_code=400, detail=f"Server '{request.server_name}' has no OAuth config")
-
-    # Validate required OAuth fields
-    validation_error = oauth.validate_oauth_config(oauth_config)
-    if validation_error:
-        raise HTTPException(status_code=400, detail=validation_error)
-
-    auth_url = oauth.start_flow(request.server_name, oauth_config)
-    return {"auth_url": auth_url}
-
-
-@app.get("/oauth/callback")
-async def oauth_callback(
-    code: str = Query(None),
-    state: str = Query(None),
-    error: str = Query(None),
-    error_description: str = Query(None),
-):
-    """OAuth callback — provider redirects here after user authenticates."""
-    from starlette.responses import HTMLResponse
-
-    # Handle provider errors (e.g. user cancelled consent)
-    if error:
-        import html as html_mod
-        desc = html_mod.escape(error_description or error)
-        return HTMLResponse(
-            f"<html><body><h2>Authentication cancelled</h2><p>{desc}</p></body></html>",
-            status_code=400,
-        )
-
-    if not code or not state:
-        return HTMLResponse(
-            "<html><body><h2>Invalid callback</h2><p>Missing code or state parameter.</p></body></html>",
-            status_code=400,
-        )
-
-    result = await oauth.handle_callback(code, state)
-    return HTMLResponse(
-        oauth.render_callback_page(result),
-        status_code=200 if result["success"] else 400,
-    )
 
 
 # --- Secrets Management (admin-only) ---

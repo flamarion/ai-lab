@@ -5,7 +5,7 @@ import { admin as adminApi, mcp as mcpApi, secrets as secretsApi, type AdminUser
 import JsonEditor from "@/components/json-editor";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowLeft, Plus, Trash2, Shield, ShieldOff, Baby, RefreshCw, Eye, EyeOff, Key, Edit2, ExternalLink } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Shield, ShieldOff, Baby, RefreshCw, Eye, EyeOff, Key, Edit2 } from "lucide-react";
 import Link from "next/link";
 
 export default function AdminPage() {
@@ -141,8 +141,6 @@ function MCPManagement({ userId }: { userId: string }) {
   const [servers, setServers] = useState<MCPServer[]>([]);
   const [configJson, setConfigJson] = useState("");
   const [configLoaded, setConfigLoaded] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [configParsed, setConfigParsed] = useState<Record<string, any>>({});
   const [editing, setEditing] = useState(false);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -154,7 +152,6 @@ function MCPManagement({ userId }: { userId: string }) {
         mcpApi.getFullConfig(userId),
       ]);
       setServers(serverData.servers);
-      setConfigParsed((configData.mcpServers || {}) as Record<string, Record<string, unknown>>);
       // Only update the editor if not actively editing
       if (!editing) {
         setConfigJson(JSON.stringify(configData, null, 2));
@@ -266,29 +263,6 @@ function MCPManagement({ userId }: { userId: string }) {
             <span className={`text-xs shrink-0 ${s.connected ? "text-[var(--color-success)]" : "text-[var(--color-error)]"}`}>
               {s.connected ? `${s.tools.length} tool(s)` : "disconnected"}
             </span>
-            {/* OAuth Connect button for servers with oauth config */}
-            {configParsed[s.name]?.oauth && (
-              <button
-                onClick={async () => {
-                  try {
-                    setBusy(`Authenticating ${s.name}...`);
-                    const result = await mcpApi.startOAuth(userId, s.name);
-                    window.open(result.auth_url, "_blank", "width=600,height=700");
-                    setStatus(`OAuth window opened for ${s.name} — complete sign-in in the popup`);
-                  } catch (err) {
-                    setStatus(err instanceof Error ? err.message : "OAuth failed");
-                  } finally {
-                    setBusy(null);
-                  }
-                }}
-                disabled={!!busy}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs bg-[var(--color-accent-soft)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-bg)] transition-colors disabled:opacity-30"
-                title="Authenticate with OAuth"
-              >
-                <ExternalLink size={12} />
-                Connect
-              </button>
-            )}
             <button
               onClick={() => setEditing(true)}
               className="p-1.5 rounded-lg hover:bg-[var(--color-bg-hover)] text-[var(--color-text-muted)]"
