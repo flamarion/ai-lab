@@ -17,7 +17,7 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
     sys.path.insert(0, _shared_path)
 
 from ai_lab_common.config import settings
-from src import chunker, context, db, migrations, router, tools, vector_store
+from src import chunker, context, db, migrations, oauth, router, tools, vector_store
 from src.mcp_client import mcp_manager
 from src.ollama_client import OllamaClient
 
@@ -625,6 +625,55 @@ async def restart_mcp(request: MCPAdminRequest):
     await _require_admin(request.admin_user_id)
     await mcp_manager.reload()
     return {"status": "restarted", "tools": mcp_manager.get_tool_names()}
+
+
+# --- OAuth for MCP servers ---
+
+
+class OAuthStartRequest(BaseModel):
+    admin_user_id: str
+    server_name: str
+
+
+@app.post("/oauth/start")
+async def oauth_start(request: OAuthStartRequest):
+    """Admin-only: start OAuth flow for an MCP server. Returns the auth URL to open in browser."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(request.admin_user_id)
+
+    config = await mcp_manager.get_config()
+    server_config = config.get(request.server_name)
+    if not server_config:
+        raise HTTPException(status_code=404, detail=f"Server '{request.server_name}' not found")
+
+    oauth_config = server_config.get("oauth")
+    if not oauth_config:
+        raise HTTPException(status_code=400, detail=f"Server '{request.server_name}' has no OAuth config")
+
+    auth_url = oauth.start_flow(request.server_name, oauth_config)
+    return {"auth_url": auth_url}
+
+
+@app.get("/oauth/callback")
+async def oauth_callback(code: str = Query(...), state: str = Query(...)):
+    """OAuth callback — provider redirects here after user authenticates."""
+    result = await oauth.handle_callback(code, state)
+    if result["success"]:
+        # Return a simple HTML page that closes itself
+        from starlette.responses import HTMLResponse
+        return HTMLResponse(
+            f"<html><body><h2>Connected to {result['server_name']}</h2>"
+            "<p>You can close this window.</p>"
+            "<script>setTimeout(() => window.close(), 2000)</script></body></html>"
+        )
+    else:
+        from starlette.responses import HTMLResponse
+        return HTMLResponse(
+            f"<html><body><h2>Connection failed</h2>"
+            f"<p>{result['error']}</p></body></html>",
+            status_code=400,
+        )
 
 
 # --- Secrets Management (admin-only) ---
