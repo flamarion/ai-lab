@@ -506,6 +506,44 @@ async def list_mcp_servers():
     return {"servers": await mcp_manager.list_servers()}
 
 
+@app.get("/mcp/config")
+async def get_full_mcp_config(admin_user_id: str = Query(...)):
+    """Admin-only: get the full MCP config in Cursor/Claude Desktop format."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(admin_user_id)
+    config = await mcp_manager.get_config()
+    return {"mcpServers": config}
+
+
+class SaveMCPConfigRequest(BaseModel):
+    admin_user_id: str
+    config: dict  # {"mcpServers": {...}} or just {...}
+
+
+@app.put("/mcp/config")
+async def save_full_mcp_config(request: SaveMCPConfigRequest):
+    """Admin-only: replace the entire MCP config and reconnect."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(request.admin_user_id)
+
+    # Accept both {"mcpServers": {...}} and plain {...}
+    servers = request.config.get("mcpServers", request.config)
+    if not isinstance(servers, dict):
+        raise HTTPException(status_code=400, detail="Config must be an object")
+    for name, cfg in servers.items():
+        if not isinstance(cfg, dict):
+            raise HTTPException(status_code=400, detail=f"Server '{name}' config must be an object")
+
+    await mcp_manager.save_config(servers)
+    await mcp_manager.reload()
+    return {
+        "status": "saved",
+        "servers": await mcp_manager.list_servers(),
+    }
+
+
 @app.get("/mcp/servers/{name}/config")
 async def get_mcp_server_config(name: str, admin_user_id: str = Query(...)):
     """Admin-only: get the raw JSON config for an MCP server.
