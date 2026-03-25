@@ -306,8 +306,17 @@ Phase 6.5 hybrid tool architecture:
 
 ---
 
-### Phase 7 — Agents
-**What you'll build:** Orchestration loop — plan → act → observe → repeat
+### Phase 7 — Agents (in progress)
+**What you're building:** Orchestration loop — plan → act → observe → repeat
+
+**Built so far:**
+- Per-user memory: persistent facts stored in Postgres, injected into every system prompt
+- save_memory tool: model can save facts during conversation ("remember that I prefer concise responses")
+- Auto memory extraction: every 6 turns, model extracts new facts as a background task
+- Conversation summarization: compresses old messages when approaching 28k token budget (out of 32k context)
+- Agent system prompt: planning instructions injected when tools enabled (think → act → observe)
+- Non-blocking gateway startup: all services init in background, gateway serves immediately
+
 **What you'll learn:**
 - Autonomous AI systems and the agent loop
 - Memory: short-term (conversation) vs long-term (persisted)
@@ -317,7 +326,7 @@ Phase 6.5 hybrid tool architecture:
 **Remaining work:**
 - Per-chat RAG/tools toggles in the chat input area (not just in Settings)
 - Per-user document scoping (user-specific vs shared documents)
-- Ollama context tuning (32k validated, summarization at 28k budget)
+- Agent loop refinement: multi-step planning with tool chains
 
 ---
 

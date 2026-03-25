@@ -57,7 +57,7 @@ cp .env.example .env   # fill in WANDB_API_KEY and DATABASE_URL
 ```
 
 Services start at:
-- Chat UI: http://localhost:8501
+- Web UI: http://localhost:3000
 - LLM Gateway: http://localhost:8000
 - Gateway API docs: http://localhost:8000/docs
 
@@ -165,6 +165,7 @@ ai-lab/
 │       │   ├── ollama_client.py       # Ollama HTTP client (chat + embed + tools)
 │       │   ├── tools.py               # Local tool registry (calculator, time, unit convert)
 │       │   ├── mcp_client.py          # MCP client manager (stdio/HTTP/SSE transports)
+│       │   ├── context.py             # Conversation summarization + user memory injection
 │       │   ├── router.py              # Smart model routing (code vs general vs tools)
 │       │   ├── db.py                  # asyncpg pool + queries (users, convos, secrets, MCP config)
 │       │   ├── chunker.py             # Document loading and chunking
@@ -191,7 +192,8 @@ ai-lab/
 │       ├── 005_user_delete_cascade.sql
 │       ├── 006_user_child_flag.sql    # is_child column
 │       ├── 007_secrets.sql            # secrets key-value store
-│       └── 008_mcp_config.sql         # MCP server config persistence
+│       ├── 008_mcp_config.sql         # MCP server config persistence
+│       └── 009_user_memory.sql        # Per-user persistent memory
 └── scripts/
     ├── run_local.sh                   # Local dev (interactive)
     ├── deploy-app.sh                  # Deploy gateway + chat UI
