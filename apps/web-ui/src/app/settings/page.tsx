@@ -37,14 +37,18 @@ export default function SettingsPage() {
     if (user) memApi.list(user.user_id).then((d) => setMemories(d.memories)).catch(() => {});
   }, [user]);
 
-  const handleSave = async () => {
-    setSaving(true);
-    await updatePreferences({
-      model, temperature, top_p: topP, num_predict: numPredict,
-      system_prompt: systemPrompt, use_rag: useRag, use_tools: useTools,
-    });
-    setSaving(false);
-  };
+  // Auto-save on any change (debounced)
+  useEffect(() => {
+    if (!user) return;
+    const timeout = setTimeout(() => {
+      setSaving(true);
+      updatePreferences({
+        model, temperature, top_p: topP, num_predict: numPredict,
+        system_prompt: systemPrompt, use_rag: useRag, use_tools: useTools,
+      }).finally(() => setSaving(false));
+    }, 500); // 500ms debounce
+    return () => clearTimeout(timeout);
+  }, [model, temperature, topP, numPredict, systemPrompt, useRag, useTools]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUpload = async (files: FileList) => {
     for (const file of Array.from(files)) {
@@ -88,13 +92,9 @@ export default function SettingsPage() {
           </Link>
           <h1 className="text-lg font-semibold">Settings</h1>
           <div className="flex-1" />
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-4 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm font-medium hover:bg-[var(--color-accent-hover)] transition-colors disabled:opacity-50"
-          >
-            {saving ? "Saving..." : "Save"}
-          </button>
+          {saving && (
+            <span className="text-xs text-[var(--color-text-muted)]">Saving...</span>
+          )}
         </div>
       </header>
 
