@@ -51,7 +51,7 @@ class OllamaClient:
         messages: list[dict],
         options: dict | None = None,
         max_tool_rounds: int = 5,
-        on_status: callable | None = None,
+        on_status=None,
     ) -> tuple[str, list[dict]]:
         """Chat with tool use support.
 
