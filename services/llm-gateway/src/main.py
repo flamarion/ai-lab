@@ -47,66 +47,74 @@ def _validate_uuid(value: str) -> uuid.UUID:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global client
-    # --- Weave init ---
-    if settings.WEAVE_ENABLED:
-        try:
-            import weave
 
-            _original_checkLevel = logging._checkLevel
-
-            def _patched_checkLevel(level):
-                if callable(level) and hasattr(level, "__name__"):
-                    level = level.__name__.upper()
-                return _original_checkLevel(level)
-
-            logging._checkLevel = _patched_checkLevel
-            try:
-                weave.init(settings.WANDB_PROJECT)
-            finally:
-                logging._checkLevel = _original_checkLevel
-            logger.info("Weave initialized — project: %s", settings.WANDB_PROJECT)
-        except Exception as e:
-            logger.warning("Failed to initialize Weave: %s — tracing disabled.", e)
-    else:
-        logger.info("Weave disabled (WEAVE_ENABLED=%s)", os.getenv("WEAVE_ENABLED", "true"))
-
-    # --- Database pool init ---
-    try:
-        await db.init_pool(settings.DATABASE_URL)
-        logger.info("Database connected")
-    except Exception as e:
-        logger.warning("Failed to connect to database: %s — persistence disabled.", e)
-
-    # --- Run migrations ---
-    if db.is_available():
-        try:
-            await migrations.run_migrations(db.get_pool())
-        except Exception as e:
-            logger.warning("Migration failed: %s — schema may be incomplete.", e)
-
-    # --- Qdrant init ---
-    try:
-        vector_store.init_store()
-        logger.info("Qdrant connected")
-    except Exception as e:
-        logger.warning("Failed to connect to Qdrant: %s — RAG disabled.", e)
-
+    # Create the Ollama client immediately — it's just an httpx client,
+    # no connection needed until the first request.
     client = OllamaClient(settings.OLLAMA_HOST)
 
-    # --- MCP server connections (non-blocking) ---
-    # Start MCP connections in the background so the gateway can serve
-    # requests immediately. MCP tools become available once connected.
-    async def _start_mcp():
+    # --- Background initialization ---
+    # All external connections (DB, Qdrant, Weave, MCP) happen in a
+    # background task so the gateway starts serving requests immediately.
+    # Services become available as they connect. This prevents slow/hanging
+    # external services from blocking login, health checks, etc.
+    async def _init_services():
+        # Weave
+        if settings.WEAVE_ENABLED:
+            try:
+                import weave
+
+                _original_checkLevel = logging._checkLevel
+
+                def _patched_checkLevel(level):
+                    if callable(level) and hasattr(level, "__name__"):
+                        level = level.__name__.upper()
+                    return _original_checkLevel(level)
+
+                logging._checkLevel = _patched_checkLevel
+                try:
+                    weave.init(settings.WANDB_PROJECT)
+                finally:
+                    logging._checkLevel = _original_checkLevel
+                logger.info("Weave initialized — project: %s", settings.WANDB_PROJECT)
+            except Exception as e:
+                logger.warning("Failed to initialize Weave: %s — tracing disabled.", e)
+        else:
+            logger.info("Weave disabled (WEAVE_ENABLED=%s)", os.getenv("WEAVE_ENABLED", "true"))
+
+        # Database
+        try:
+            await db.init_pool(settings.DATABASE_URL)
+            logger.info("Database connected")
+        except Exception as e:
+            logger.warning("Failed to connect to database: %s — persistence disabled.", e)
+
+        # Migrations
+        if db.is_available():
+            try:
+                await migrations.run_migrations(db.get_pool())
+            except Exception as e:
+                logger.warning("Migration failed: %s — schema may be incomplete.", e)
+
+        # Qdrant
+        try:
+            vector_store.init_store()
+            logger.info("Qdrant connected")
+        except Exception as e:
+            logger.warning("Failed to connect to Qdrant: %s — RAG disabled.", e)
+
+        # MCP servers
         try:
             await mcp_manager.start()
         except Exception as e:
             logger.warning("MCP initialization failed: %s — MCP tools unavailable.", e)
 
-    mcp_task = asyncio.create_task(_start_mcp())
+        logger.info("All services initialized")
+
+    init_task = asyncio.create_task(_init_services())
 
     yield
 
-    mcp_task.cancel()
+    init_task.cancel()
     await mcp_manager.stop()
     await client.close()
     await db.close_pool()
