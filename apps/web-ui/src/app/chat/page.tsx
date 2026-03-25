@@ -6,7 +6,7 @@ import ChatSidebar from "@/components/chat-sidebar";
 import ChatMessageComponent from "@/components/chat-message";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Menu, Send, Zap } from "lucide-react";
+import { Menu, Send, Zap, BookOpen } from "lucide-react";
 
 interface Message {
   role: "user" | "assistant";
@@ -23,6 +23,9 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [sidebarRefresh, setSidebarRefresh] = useState(0);
+  // Per-chat overrides (default from user preferences, togglable in input bar)
+  const [ragEnabled, setRagEnabled] = useState<boolean | null>(null); // null = use pref default
+  const [toolsEnabled, setToolsEnabled] = useState<boolean | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -79,8 +82,8 @@ export default function ChatPage() {
         top_p: (prefs.top_p as number) ?? 0.9,
         num_predict: (prefs.num_predict as number) ?? 1024,
         system_prompt: (prefs.system_prompt as string) || undefined,
-        use_rag: (prefs.use_rag as boolean) ?? false,
-        use_tools: (prefs.use_tools as boolean) ?? false,
+        use_rag: ragEnabled ?? (prefs.use_rag as boolean) ?? false,
+        use_tools: toolsEnabled ?? (prefs.use_tools as boolean) ?? false,
         user_id: user.user_id,
         conversation_id: conversationId || undefined,
         history: conversationId ? undefined : messages.map((m) => ({ role: m.role, content: m.content })),
@@ -113,10 +116,14 @@ export default function ChatPage() {
     } else {
       setConversationId(null);
       setMessages([]);
+      // Reset per-chat overrides to preference defaults
+      setRagEnabled(null);
+      setToolsEnabled(null);
     }
   };
 
-  const useTools = (prefs.use_tools as boolean) ?? false;
+  const effectiveRag = ragEnabled ?? (prefs.use_rag as boolean) ?? false;
+  const effectiveTools = toolsEnabled ?? (prefs.use_tools as boolean) ?? false;
 
   if (loading || !user) return null;
 
@@ -146,10 +153,16 @@ export default function ChatPage() {
           >
             AI Lab
           </h1>
-          {useTools && (
+          {effectiveTools && (
             <span className="flex items-center gap-1 text-xs text-[var(--color-accent)] bg-[var(--color-accent-soft)] px-2 py-0.5 rounded-full">
               <Zap size={10} />
               Tools
+            </span>
+          )}
+          {effectiveRag && (
+            <span className="flex items-center gap-1 text-xs text-[var(--color-accent)] bg-[var(--color-accent-soft)] px-2 py-0.5 rounded-full">
+              <BookOpen size={10} />
+              RAG
             </span>
           )}
           <div className="flex-1" />
@@ -203,28 +216,63 @@ export default function ChatPage() {
 
         {/* Input */}
         <div className="border-t border-[var(--color-border)] p-4">
-          <div className="max-w-3xl mx-auto relative">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={handleInputChange}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              placeholder="Type your message..."
-              rows={1}
-              className="w-full resize-none bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl px-4 py-3 pr-12 text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-border-light)] transition-colors"
-            />
-            <button
-              onClick={handleSend}
-              disabled={!input.trim() || sending}
-              className="absolute right-3 bottom-3 p-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] disabled:opacity-30 hover:bg-[var(--color-accent-hover)] transition-colors"
-            >
-              <Send size={16} />
-            </button>
+          <div className="max-w-3xl mx-auto">
+            {/* Per-chat toggles */}
+            <div className="flex items-center gap-1 mb-2">
+              <button
+                onClick={() => setToolsEnabled((prev) => {
+                  const current = prev ?? (prefs.use_tools as boolean) ?? false;
+                  return !current;
+                })}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs transition-colors ${
+                  effectiveTools
+                    ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)] border border-[var(--color-accent)]"
+                    : "bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)] hover:border-[var(--color-border-light)]"
+                }`}
+              >
+                <Zap size={10} />
+                Tools
+              </button>
+              <button
+                onClick={() => setRagEnabled((prev) => {
+                  const current = prev ?? (prefs.use_rag as boolean) ?? false;
+                  return !current;
+                })}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs transition-colors ${
+                  effectiveRag
+                    ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)] border border-[var(--color-accent)]"
+                    : "bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)] hover:border-[var(--color-border-light)]"
+                }`}
+              >
+                <BookOpen size={10} />
+                RAG
+              </button>
+            </div>
+
+            {/* Text input + send */}
+            <div className="relative">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={handleInputChange}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                placeholder="Type your message..."
+                rows={1}
+                className="w-full resize-none bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl px-4 py-3 pr-12 text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-border-light)] transition-colors"
+              />
+              <button
+                onClick={handleSend}
+                disabled={!input.trim() || sending}
+                className="absolute right-3 bottom-3 p-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] disabled:opacity-30 hover:bg-[var(--color-accent-hover)] transition-colors"
+              >
+                <Send size={16} />
+              </button>
+            </div>
           </div>
           <p className="text-center text-xs text-[var(--color-text-muted)] mt-2">
             AI can make mistakes. Verify important information.

@@ -325,6 +325,7 @@ Phase 6.5 hybrid tool architecture:
 
 **Remaining work:**
 - Per-chat RAG/tools toggles in the chat input area (not just in Settings)
+- OAuth 2.0 for MCP servers (browser-based auth flow for services like Granola that require user sign-in instead of API keys)
 - Per-user document scoping (user-specific vs shared documents)
 - Agent loop refinement: multi-step planning with tool chains
 
