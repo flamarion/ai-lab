@@ -4,6 +4,7 @@ import { type ToolUsed } from "@/lib/api";
 import { Wrench, ChevronDown, ChevronUp, Copy, Check } from "lucide-react";
 import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 
 interface Props {
@@ -94,9 +95,9 @@ export default function ChatMessage({ role, content, toolsUsed, isStreaming }: P
         )}
 
         {/* Message content — rendered as markdown for both user and assistant */}
-        <div className="message-content text-[0.9375rem] leading-relaxed">
+        <div className="message-content text-[0.9375rem] leading-relaxed [&>:last-child]:mb-0">
           <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
+            remarkPlugins={[remarkGfm, remarkBreaks]}
             components={{
               code({ className, children, ...props }) {
                 const isBlock = className || String(children).includes("\n");
@@ -111,6 +112,10 @@ export default function ChatMessage({ role, content, toolsUsed, isStreaming }: P
               },
               pre({ children }) {
                 return <>{children}</>;
+              },
+              // Block images to prevent external request tracking
+              img({ alt }) {
+                return <span className="text-[var(--color-text-muted)] italic">[image: {alt || "removed"}]</span>;
               },
               table({ children }) {
                 return (
