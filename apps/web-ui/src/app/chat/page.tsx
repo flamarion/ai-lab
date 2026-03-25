@@ -22,6 +22,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [statusText, setStatusText] = useState("");
   const [sidebarRefresh, setSidebarRefresh] = useState(0);
   // Per-chat overrides (default from user preferences, togglable in input bar)
   const [ragEnabled, setRagEnabled] = useState<boolean | null>(null); // null = use pref default
@@ -71,11 +72,10 @@ export default function ChatPage() {
     setSending(true);
 
     try {
-      // Build model selection
       const savedModel = prefs.model as string | undefined;
       const model = savedModel && savedModel !== "Auto (recommended)" ? savedModel : undefined;
 
-      const result = await chatApi.send({
+      const params = {
         message: msg,
         model,
         temperature: (prefs.temperature as number) ?? 0.7,
@@ -87,8 +87,14 @@ export default function ChatPage() {
         user_id: user.user_id,
         conversation_id: conversationId || undefined,
         history: conversationId ? undefined : messages.map((m) => ({ role: m.role, content: m.content })),
+      };
+
+      // Use streaming endpoint for real-time status updates
+      const result = await chatApi.sendStream(params, (event) => {
+        setStatusText(event.detail || event.status);
       });
 
+      setStatusText("");
       setConversationId(result.conversation_id);
       setSidebarRefresh((n) => n + 1);
       setMessages((prev) => [
@@ -100,6 +106,7 @@ export default function ChatPage() {
         },
       ]);
     } catch (err) {
+      setStatusText("");
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: `Error: ${err instanceof Error ? err.message : "Something went wrong"}` },
@@ -208,7 +215,7 @@ export default function ChatPage() {
                 />
               ))}
               {sending && (
-                <ChatMessageComponent role="assistant" content="" isStreaming />
+                <ChatMessageComponent role="assistant" content="" isStreaming statusText={statusText} />
               )}
             </div>
           )}

@@ -97,6 +97,11 @@ export interface ConversationDetail extends Conversation {
   messages: { role: string; content: string; created_at: string }[];
 }
 
+export interface StatusEvent {
+  status: string;
+  detail: string;
+}
+
 export const chat = {
   send: (params: {
     message: string;
@@ -115,6 +120,70 @@ export const chat = {
       method: "POST",
       body: JSON.stringify(params),
     }),
+
+  /**
+   * Streaming chat — sends the request and yields SSE events.
+   * Use for real-time status updates (thinking, tool calls, etc.)
+   */
+  sendStream: async (
+    params: {
+      message: string;
+      model?: string;
+      temperature?: number;
+      top_p?: number;
+      num_predict?: number;
+      system_prompt?: string;
+      use_rag?: boolean;
+      use_tools?: boolean;
+      user_id?: string;
+      conversation_id?: string;
+      history?: ChatMessage[];
+    },
+    onStatus: (event: StatusEvent) => void,
+  ): Promise<ChatResponse> => {
+    const res = await fetch(`${BASE}/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `API error: ${res.status}`);
+    }
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let result: ChatResponse | null = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      let eventType = "";
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          const data = JSON.parse(line.slice(6));
+          if (eventType === "status") {
+            onStatus(data as StatusEvent);
+          } else if (eventType === "done") {
+            result = data as ChatResponse;
+          } else if (eventType === "error") {
+            throw new Error(data.detail || "Stream error");
+          }
+        }
+      }
+    }
+
+    if (!result) throw new Error("Stream ended without result");
+    return result;
+  },
 
   models: () => request<{ models: string[] }>("/models"),
   tools: () => request<{ tools: { name: string; description: string; source: string }[] }>("/tools"),

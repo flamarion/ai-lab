@@ -51,6 +51,7 @@ class OllamaClient:
         messages: list[dict],
         options: dict | None = None,
         max_tool_rounds: int = 5,
+        on_status: callable | None = None,
     ) -> tuple[str, list[dict]]:
         """Chat with tool use support.
 
@@ -58,14 +59,23 @@ class OllamaClient:
         executes them and feeds results back — repeating until the model
         produces a final text response or we hit max_tool_rounds.
 
+        on_status: optional async callback(status: str, detail: str) for
+        real-time progress reporting (SSE streaming).
+
         Returns (response_text, tools_used) where tools_used is a list of
         {"name": str, "arguments": dict, "result": str} for each tool call.
         """
+        async def _status(status: str, detail: str = ""):
+            if on_status:
+                await on_status(status, detail)
+
         # Merge local tools + MCP tools into one list for the model
         tool_schemas = tools.get_tool_schemas() + mcp_manager.get_tool_schemas()
         tools_used = []
 
         for round_num in range(max_tool_rounds):
+            await _status("thinking", f"Round {round_num + 1}" if round_num > 0 else "Thinking...")
+
             response = await self.http.post(
                 "/api/chat",
                 json={
@@ -95,6 +105,8 @@ class OllamaClient:
                 fn_name = tc["function"]["name"]
                 fn_args = tc["function"]["arguments"]
 
+                await _status("tool_call", f"Using {fn_name}...")
+
                 # Route to MCP or local tool
                 if mcp_manager.has_tool(fn_name):
                     result = await mcp_manager.call_tool(fn_name, fn_args)
@@ -104,6 +116,8 @@ class OllamaClient:
                     result = await loop.run_in_executor(
                         None, partial(tools.execute_tool, fn_name, fn_args)
                     )
+
+                await _status("tool_result", f"{fn_name} completed")
 
                 tools_used.append({
                     "name": fn_name,

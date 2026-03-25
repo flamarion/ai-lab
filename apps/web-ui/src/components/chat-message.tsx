@@ -11,6 +11,7 @@ interface Props {
   role: "user" | "assistant";
   content: string;
   toolsUsed?: ToolUsed[];
+  statusText?: string;
   isStreaming?: boolean;
 }
 
@@ -54,7 +55,7 @@ function CodeBlock({ className, children }: { className?: string; children: Reac
   );
 }
 
-export default function ChatMessage({ role, content, toolsUsed, isStreaming }: Props) {
+export default function ChatMessage({ role, content, toolsUsed, isStreaming, statusText }: Props) {
   const [toolsOpen, setToolsOpen] = useState(false);
 
   return (
@@ -153,12 +154,15 @@ export default function ChatMessage({ role, content, toolsUsed, isStreaming }: P
           </ReactMarkdown>
         </div>
 
-        {/* Streaming indicator */}
+        {/* Streaming indicator with status */}
         {isStreaming && (
-          <div className="flex gap-1 mt-2">
+          <div className="flex items-center gap-2 mt-2">
             <span className="typing-dot w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)]" />
             <span className="typing-dot w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)]" />
             <span className="typing-dot w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)]" />
+            {statusText && (
+              <span className="text-xs text-[var(--color-text-muted)] ml-1">{statusText}</span>
+            )}
           </div>
         )}
       </div>
