@@ -45,48 +45,48 @@ def _validate_uuid(value: str) -> uuid.UUID:
 
 
 # --- Stderr capture for MCP auth URLs ---
-# mcp-remote prints OAuth URLs to subprocess stderr. We intercept
-# stderr at the process level to capture these URLs and surface
-# them in the admin UI.
+# mcp-remote prints OAuth URLs to subprocess stderr. Subprocesses write
+# directly to OS fd 2, bypassing Python's sys.stderr. We intercept at
+# the fd level by redirecting fd 2 through a pipe and reading it in a
+# background thread.
 import re as _re
+import threading as _threading
+import time as _time
 
 _AUTH_URL_PATTERN = _re.compile(r"https?://\S+authorize\S+")
-_auth_urls: list[dict] = []  # [{url, timestamp, server_hint}]
-_original_stderr = sys.stderr
+_auth_urls: list[dict] = []
 
 
-class _StderrCapture:
-    """Intercepts stderr writes to capture OAuth auth URLs from mcp-remote."""
+def _start_stderr_capture():
+    """Redirect OS-level fd 2 through a pipe to capture subprocess stderr."""
+    read_fd, write_fd = os.pipe()
+    original_stderr_fd = os.dup(2)
+    os.dup2(write_fd, 2)
+    os.close(write_fd)
+    # Also update Python's sys.stderr to use the original fd
+    sys.stderr = os.fdopen(original_stderr_fd, "w", buffering=1)
 
-    def __init__(self, original):
-        self.original = original
+    def _reader():
+        with os.fdopen(read_fd, "r", errors="replace") as f:
+            for line in f:
+                # Forward to original stderr
+                try:
+                    sys.stderr.write(line)
+                    sys.stderr.flush()
+                except Exception:
+                    pass
+                # Check for auth URLs
+                if "authorize" in line.lower():
+                    urls = _AUTH_URL_PATTERN.findall(line)
+                    for url in urls:
+                        _auth_urls.append({"url": url, "timestamp": _time.time()})
+                        while len(_auth_urls) > 20:
+                            _auth_urls.pop(0)
 
-    def write(self, data: str):
-        self.original.write(data)
-        if data and "authorize" in data.lower():
-            urls = _AUTH_URL_PATTERN.findall(data)
-            for url in urls:
-                import time
-                _auth_urls.append({
-                    "url": url,
-                    "timestamp": time.time(),
-                })
-                # Keep only last 20 URLs
-                while len(_auth_urls) > 20:
-                    _auth_urls.pop(0)
-                logger.info("Captured OAuth auth URL: %s", url[:80])
-
-    def flush(self):
-        self.original.flush()
-
-    def fileno(self):
-        return self.original.fileno()
-
-    def isatty(self):
-        return self.original.isatty()
+    _threading.Thread(target=_reader, daemon=True, name="stderr-capture").start()
 
 
-sys.stderr = _StderrCapture(_original_stderr)
+_start_stderr_capture()
 
 
 @asynccontextmanager
