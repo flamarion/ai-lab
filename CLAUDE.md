@@ -24,7 +24,7 @@ Personal AI engineering lab for learning end-to-end AI system design. The goal i
 ### Network topology
 ```
 ai-app VM (192.168.1.201)  - LAN ->  GPU PC (192.168.1.178)
-  ├── chat-ui:8501                     └── Ollama:11434
+  ├── web-ui:3000                      └── Ollama:11434
   └── llm-gateway:8000
          |
          LAN
@@ -110,7 +110,7 @@ Services are accessible from any LAN device at `http://<ai-app-vm-ip>:8501` (Cha
 ## Architecture
 
 ```
-User → Streamlit (chat-ui:8501) → FastAPI (llm-gateway:8000) → Ollama (GPU PC:11434)
+User → nginx (:80) → Next.js (web-ui:3000) → FastAPI (llm-gateway:8000) → Ollama (GPU PC:11434)
                                        ↓              ↓              ↑
                                   W&B Weave      Postgres        /api/embed
                                   (tracing)      (ai-data)       (embeddings)
@@ -149,6 +149,8 @@ User → Streamlit (chat-ui:8501) → FastAPI (llm-gateway:8000) → Ollama (GPU
 - `POST /mcp/servers` — add an MCP server to config and reconnect
 - `DELETE /mcp/servers/{name}` — remove an MCP server and reconnect
 - `POST /mcp/restart` — reconnect to all configured MCP servers
+- `GET /mcp/config` — get full MCP config in Cursor/Claude Desktop format
+- `PUT /mcp/config` — replace entire MCP config and reconnect
 
 **Secrets (admin-only):**
 - `GET /secrets` — list secret keys (values are never exposed)
@@ -159,6 +161,11 @@ User → Streamlit (chat-ui:8501) → FastAPI (llm-gateway:8000) → Ollama (GPU
 - `POST /ingest` — upload a document for RAG (file upload, returns document_id + chunk count)
 - `GET /documents` — list ingested documents
 - `DELETE /documents/{id}` — delete a document and its vectors
+
+**Memory:**
+- `GET /memory` — list user memory entries
+- `POST /memory` — add a memory entry (user_id + content)
+- `DELETE /memory/{memory_id}` — delete a memory entry (enforces user ownership)
 
 **Conversations:**
 - `GET /conversations` — list recent conversations (filtered by user_id query param)
@@ -180,6 +187,7 @@ Current migrations:
 - `006_user_child_flag.sql` — is_child column on users (for future guardrails)
 - `007_secrets.sql` — secrets table (key-value store for MCP credentials)
 - `008_mcp_config.sql` — mcp_config table (persists MCP server config across container restarts)
+- `009_user_memory.sql` — user_memory table (per-user persistent memory for cross-conversation context)
 
 Two compose files, one per VM:
 - `infra/docker/docker-compose.yml` — ai-app VM (nginx + gateway + chat UI)
@@ -187,7 +195,7 @@ Two compose files, one per VM:
 
 ### Reverse Proxy
 
-nginx sits in front of Streamlit and the gateway on port 80. Family accesses `http://<ai-app-vm-ip>` — no port needed. Config at `infra/docker/nginx/default.conf`. The gateway API is available at `/api/` (prefix stripped).
+nginx sits in front of the Next.js web UI and the gateway on port 80. Family accesses `http://<ai-app-vm-ip>` — no port needed. Config at `infra/docker/nginx/default.conf`. The gateway API is available at `/api/` (prefix stripped).
 
 ### RAG Pipeline
 
@@ -222,7 +230,7 @@ Two runners:
 When `use_tools=True` in a chat request, the gateway sends tool schemas to Ollama alongside the messages. If the model returns `tool_calls`, the gateway executes them and feeds results back — repeating until the model produces a final text response (up to 5 rounds).
 
 Tools come from two sources:
-- **Local tools** (`services/llm-gateway/src/tools.py`): `calculator` (safe math eval), `current_time` (UTC date/time), `unit_convert` (length, weight, volume, temperature). Adding a new tool: write a function + schema in `TOOL_REGISTRY`. See the docstring in `tools.py` for a full guide.
+- **Local tools** (`services/llm-gateway/src/tools.py`): `calculator` (safe math eval), `current_time` (UTC date/time), `unit_convert` (length, weight, volume, temperature), `save_memory` (persist a fact about the user for future conversations). Adding a new tool: write a function + schema in `TOOL_REGISTRY`. See the docstring in `tools.py` for a full guide.
 - **MCP servers** (`services/llm-gateway/mcp_servers.json`): community tool servers connected via the Model Context Protocol. Default: `mcp-server-fetch` (reads URLs as markdown). Add more by editing the JSON config — same format as Claude Desktop.
 
 The gateway merges both tool lists and routes calls to the right place (MCP or local).
@@ -279,7 +287,7 @@ Note: `OLLAMA_CONTEXT_LENGTH` was removed — Ollama auto-detects 24GB VRAM and 
 
 ## Tech Stack
 
-- Python 3.12, FastAPI, Streamlit, httpx
+- Python 3.12, FastAPI, Next.js 16, TypeScript, Tailwind CSS, httpx
 - Ollama (local LLM inference + embeddings)
 - Postgres 16, asyncpg (conversations, documents, users)
 - Qdrant (vector search for RAG)
