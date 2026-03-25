@@ -248,7 +248,7 @@ MCP server config format (in `mcp_servers.json`):
 }
 ```
 
-Only tool-capable models work: llama3.1, qwen3.5, gemma3. mistral:7b and llama3 do not support Ollama's tools API.
+Only tool-capable models work: llama3.1, qwen3.5. mistral:7b, llama3, and gemma3 do not support Ollama's tools API.
 
 ## Key Patterns
 

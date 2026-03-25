@@ -172,7 +172,7 @@ export default function SettingsPage() {
         <Section title="Features">
           <div className="space-y-3">
             <Toggle label="Use documents (RAG)" description="Ground answers in your uploaded documents" checked={useRag} onChange={setUseRag} />
-            <Toggle label="Use tools" description="Calculator, unit converter, web fetch, MCP tools. Requires llama3.1, qwen3.5, or gemma3." checked={useTools} onChange={setUseTools} />
+            <Toggle label="Use tools" description="Calculator, unit converter, web fetch, MCP tools. Requires llama3.1 or qwen3.5." checked={useTools} onChange={setUseTools} />
           </div>
         </Section>
 
