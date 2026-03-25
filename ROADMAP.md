@@ -314,6 +314,11 @@ Phase 6.5 hybrid tool architecture:
 - Planning and reasoning strategies
 - When to stop: exit conditions and guardrails
 
+**Remaining work:**
+- Per-chat RAG/tools toggles in the chat input area (not just in Settings)
+- Per-user document scoping (user-specific vs shared documents)
+- Ollama context tuning (32k validated, summarization at 28k budget)
+
 ---
 
 ### Phase 7.5 — Web Search (SearXNG or Ollama)
