@@ -5,7 +5,7 @@ import { admin as adminApi, mcp as mcpApi, secrets as secretsApi, type AdminUser
 import JsonEditor from "@/components/json-editor";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowLeft, Plus, Trash2, Shield, ShieldOff, Baby, RefreshCw, Eye, EyeOff, Key } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Shield, ShieldOff, Baby, RefreshCw, Eye, EyeOff, Key, Edit2 } from "lucide-react";
 import Link from "next/link";
 
 export default function AdminPage() {
@@ -227,6 +227,11 @@ function MCPManagement({ userId }: { userId: string }) {
           <button onClick={handleRestart} disabled={!!busy} className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-30" title="Restart all">
             <RefreshCw size={14} />
           </button>
+          {!editing && (
+            <button onClick={() => setEditing(true)} className="flex items-center gap-1 text-xs text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
+              <Plus size={14} /> {servers.length > 0 ? "Edit config" : "Add servers"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -243,39 +248,8 @@ function MCPManagement({ userId }: { userId: string }) {
         <p className={`text-xs mb-3 animate-fade-in ${status.includes("failed") || status.includes("Failed") || status.includes("Invalid") ? "text-[var(--color-error)]" : "text-[var(--color-accent)]"}`}>{status}</p>
       )}
 
-      {/* Single JSON editor for the full config — Cursor style */}
-      <div className="mb-4">
-        <JsonEditor
-          value={configJson}
-          onChange={(v) => { setConfigJson(v); setEditing(true); }}
-          rows={12}
-          placeholder={'{\n  "mcpServers": {\n    "fetch": {\n      "command": "python",\n      "args": ["-m", "mcp_server_fetch"]\n    }\n  }\n}'}
-        />
-        <div className="flex items-center gap-2 mt-2">
-          <button
-            onClick={handleSave}
-            disabled={!!busy || !configLoaded}
-            className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm font-medium disabled:opacity-50"
-          >
-            {busy ? "Connecting..." : "Save & reconnect"}
-          </button>
-          {editing && (
-            <button
-              onClick={() => { setEditing(false); reload(); }}
-              disabled={!!busy}
-              className="px-4 py-2 rounded-lg bg-[var(--color-bg-hover)] text-sm disabled:opacity-50"
-            >
-              Discard
-            </button>
-          )}
-          <p className="text-xs text-[var(--color-text-muted)] flex-1">
-            Use {"`${SECRET_NAME}`"} to reference secrets. {"`${file:SECRET_NAME}`"} for files (kubeconfig, certs).
-          </p>
-        </div>
-      </div>
-
       {/* Server status cards */}
-      <div className="space-y-2">
+      <div className="space-y-2 mb-4">
         {servers.map((s) => (
           <div key={s.name} className="flex items-center gap-3 px-4 py-3 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
             <div className={`w-2 h-2 rounded-full shrink-0 ${s.connected ? "bg-[var(--color-success)]" : "bg-[var(--color-error)]"}`} />
@@ -289,11 +263,72 @@ function MCPManagement({ userId }: { userId: string }) {
             <span className={`text-xs shrink-0 ${s.connected ? "text-[var(--color-success)]" : "text-[var(--color-error)]"}`}>
               {s.connected ? `${s.tools.length} tool(s)` : "disconnected"}
             </span>
+            <button
+              onClick={() => setEditing(true)}
+              className="p-1.5 rounded-lg hover:bg-[var(--color-bg-hover)] text-[var(--color-text-muted)]"
+              title="Edit config"
+            >
+              <Edit2 size={14} />
+            </button>
+            <button
+              onClick={async () => {
+                try {
+                  const parsed = JSON.parse(configJson);
+                  const servers = parsed.mcpServers || parsed;
+                  delete servers[s.name];
+                  const updated = parsed.mcpServers ? parsed : { mcpServers: servers };
+                  setBusy(`Removing ${s.name}...`);
+                  await mcpApi.saveFullConfig(userId, updated);
+                  setEditing(false);
+                  await reload();
+                  setStatus(`Removed ${s.name}`);
+                } catch (err) {
+                  setStatus(err instanceof Error ? err.message : "Failed");
+                } finally {
+                  setBusy(null);
+                }
+              }}
+              className="p-1.5 rounded-lg hover:bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-error)]"
+              title="Remove server"
+            >
+              <Trash2 size={14} />
+            </button>
           </div>
         ))}
         {servers.length === 0 && !configLoaded && <p className="text-sm text-[var(--color-text-muted)]">Loading...</p>}
-        {servers.length === 0 && configLoaded && <p className="text-sm text-[var(--color-text-muted)]">No MCP servers configured — paste config above</p>}
+        {servers.length === 0 && configLoaded && !editing && <p className="text-sm text-[var(--color-text-muted)]">No MCP servers configured</p>}
       </div>
+
+      {/* JSON editor — hidden by default, shown on Edit or Add */}
+      {editing && (
+        <div className="mb-4 animate-fade-in">
+          <JsonEditor
+            value={configJson}
+            onChange={(v) => setConfigJson(v)}
+            rows={14}
+            placeholder={'{\n  "mcpServers": {\n    "fetch": {\n      "command": "python",\n      "args": ["-m", "mcp_server_fetch"]\n    }\n  }\n}'}
+          />
+          <div className="flex items-center gap-2 mt-2">
+            <button
+              onClick={handleSave}
+              disabled={!!busy || !configLoaded}
+              className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm font-medium disabled:opacity-50"
+            >
+              {busy ? "Connecting..." : "Save & reconnect"}
+            </button>
+            <button
+              onClick={() => { setEditing(false); reload(); }}
+              disabled={!!busy}
+              className="px-4 py-2 rounded-lg bg-[var(--color-bg-hover)] text-sm disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <p className="text-xs text-[var(--color-text-muted)] flex-1">
+              Use {"`${SECRET_NAME}`"} for secrets. {"`${file:SECRET_NAME}`"} for files.
+            </p>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
