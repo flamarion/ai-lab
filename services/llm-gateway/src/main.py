@@ -44,6 +44,51 @@ def _validate_uuid(value: str) -> uuid.UUID:
         raise HTTPException(status_code=400, detail=f"Invalid UUID: {value}")
 
 
+# --- Stderr capture for MCP auth URLs ---
+# mcp-remote prints OAuth URLs to subprocess stderr. We intercept
+# stderr at the process level to capture these URLs and surface
+# them in the admin UI.
+import re as _re
+
+_AUTH_URL_PATTERN = _re.compile(r"https?://\S+authorize\S+")
+_auth_urls: list[dict] = []  # [{url, timestamp, server_hint}]
+_original_stderr = sys.stderr
+
+
+class _StderrCapture:
+    """Intercepts stderr writes to capture OAuth auth URLs from mcp-remote."""
+
+    def __init__(self, original):
+        self.original = original
+
+    def write(self, data: str):
+        self.original.write(data)
+        if data and "authorize" in data.lower():
+            urls = _AUTH_URL_PATTERN.findall(data)
+            for url in urls:
+                import time
+                _auth_urls.append({
+                    "url": url,
+                    "timestamp": time.time(),
+                })
+                # Keep only last 20 URLs
+                while len(_auth_urls) > 20:
+                    _auth_urls.pop(0)
+                logger.info("Captured OAuth auth URL: %s", url[:80])
+
+    def flush(self):
+        self.original.flush()
+
+    def fileno(self):
+        return self.original.fileno()
+
+    def isatty(self):
+        return self.original.isatty()
+
+
+sys.stderr = _StderrCapture(_original_stderr)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global client
@@ -625,6 +670,20 @@ async def restart_mcp(request: MCPAdminRequest):
     await _require_admin(request.admin_user_id)
     await mcp_manager.reload()
     return {"status": "restarted", "tools": mcp_manager.get_tool_names()}
+
+
+@app.get("/mcp/auth-urls")
+async def get_mcp_auth_urls():
+    """Return captured OAuth auth URLs from mcp-remote subprocesses.
+
+    These URLs need to be opened in a browser to complete OAuth authentication
+    for MCP servers that use mcp-remote.
+    """
+    import time
+    # Only return URLs from the last 10 minutes
+    cutoff = time.time() - 600
+    recent = [u for u in _auth_urls if u["timestamp"] > cutoff]
+    return {"auth_urls": recent}
 
 
 # --- Secrets Management (admin-only) ---
