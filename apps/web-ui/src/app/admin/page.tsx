@@ -273,12 +273,12 @@ function MCPManagement({ userId }: { userId: string }) {
             <button
               onClick={async () => {
                 try {
-                  const parsed = JSON.parse(configJson);
-                  const servers = parsed.mcpServers || parsed;
-                  delete servers[s.name];
-                  const updated = parsed.mcpServers ? parsed : { mcpServers: servers };
                   setBusy(`Removing ${s.name}...`);
-                  await mcpApi.saveFullConfig(userId, updated);
+                  // Fetch fresh config to avoid saving stale edits
+                  const fresh = await mcpApi.getFullConfig(userId);
+                  const servers = fresh.mcpServers || {};
+                  delete servers[s.name];
+                  await mcpApi.saveFullConfig(userId, { mcpServers: servers });
                   setEditing(false);
                   await reload();
                   setStatus(`Removed ${s.name}`);

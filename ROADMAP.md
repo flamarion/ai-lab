@@ -323,9 +323,10 @@ Phase 6.5 hybrid tool architecture:
 - Planning and reasoning strategies
 - When to stop: exit conditions and guardrails
 
+- Per-chat RAG/tools toggles: pill buttons in chat input bar override Settings defaults per conversation
+- OAuth 2.0 for MCP: browser-based auth flow (PKCE) for services like Granola. Token stored as secret.
+
 **Remaining work:**
-- Per-chat RAG/tools toggles in the chat input area (not just in Settings)
-- OAuth 2.0 for MCP servers (browser-based auth flow for services like Granola that require user sign-in instead of API keys)
 - Per-user document scoping (user-specific vs shared documents)
 - Agent loop refinement: multi-step planning with tool chains
 

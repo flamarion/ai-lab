@@ -111,14 +111,14 @@ export default function ChatPage() {
   };
 
   const handleNewChat = (id: string | null) => {
+    // Reset per-chat overrides on any conversation switch
+    setRagEnabled(null);
+    setToolsEnabled(null);
     if (id) {
       setConversationId(id);
     } else {
       setConversationId(null);
       setMessages([]);
-      // Reset per-chat overrides to preference defaults
-      setRagEnabled(null);
-      setToolsEnabled(null);
     }
   };
 
@@ -220,10 +220,8 @@ export default function ChatPage() {
             {/* Per-chat toggles */}
             <div className="flex items-center gap-1 mb-2">
               <button
-                onClick={() => setToolsEnabled((prev) => {
-                  const current = prev ?? (prefs.use_tools as boolean) ?? false;
-                  return !current;
-                })}
+                onClick={() => setToolsEnabled(!effectiveTools)}
+                aria-pressed={effectiveTools}
                 className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs transition-colors ${
                   effectiveTools
                     ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)] border border-[var(--color-accent)]"
@@ -234,10 +232,8 @@ export default function ChatPage() {
                 Tools
               </button>
               <button
-                onClick={() => setRagEnabled((prev) => {
-                  const current = prev ?? (prefs.use_rag as boolean) ?? false;
-                  return !current;
-                })}
+                onClick={() => setRagEnabled(!effectiveRag)}
+                aria-pressed={effectiveRag}
                 className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs transition-colors ${
                   effectiveRag
                     ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)] border border-[var(--color-accent)]"

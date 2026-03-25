@@ -651,29 +651,45 @@ async def oauth_start(request: OAuthStartRequest):
     if not oauth_config:
         raise HTTPException(status_code=400, detail=f"Server '{request.server_name}' has no OAuth config")
 
+    # Validate required OAuth fields
+    validation_error = oauth.validate_oauth_config(oauth_config)
+    if validation_error:
+        raise HTTPException(status_code=400, detail=validation_error)
+
     auth_url = oauth.start_flow(request.server_name, oauth_config)
     return {"auth_url": auth_url}
 
 
 @app.get("/oauth/callback")
-async def oauth_callback(code: str = Query(...), state: str = Query(...)):
+async def oauth_callback(
+    code: str = Query(None),
+    state: str = Query(None),
+    error: str = Query(None),
+    error_description: str = Query(None),
+):
     """OAuth callback — provider redirects here after user authenticates."""
-    result = await oauth.handle_callback(code, state)
-    if result["success"]:
-        # Return a simple HTML page that closes itself
-        from starlette.responses import HTMLResponse
+    from starlette.responses import HTMLResponse
+
+    # Handle provider errors (e.g. user cancelled consent)
+    if error:
+        import html as html_mod
+        desc = html_mod.escape(error_description or error)
         return HTMLResponse(
-            f"<html><body><h2>Connected to {result['server_name']}</h2>"
-            "<p>You can close this window.</p>"
-            "<script>setTimeout(() => window.close(), 2000)</script></body></html>"
-        )
-    else:
-        from starlette.responses import HTMLResponse
-        return HTMLResponse(
-            f"<html><body><h2>Connection failed</h2>"
-            f"<p>{result['error']}</p></body></html>",
+            f"<html><body><h2>Authentication cancelled</h2><p>{desc}</p></body></html>",
             status_code=400,
         )
+
+    if not code or not state:
+        return HTMLResponse(
+            "<html><body><h2>Invalid callback</h2><p>Missing code or state parameter.</p></body></html>",
+            status_code=400,
+        )
+
+    result = await oauth.handle_callback(code, state)
+    return HTMLResponse(
+        oauth.render_callback_page(result),
+        status_code=200 if result["success"] else 400,
+    )
 
 
 # --- Secrets Management (admin-only) ---
