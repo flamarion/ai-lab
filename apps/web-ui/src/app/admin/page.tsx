@@ -5,7 +5,7 @@ import { admin as adminApi, mcp as mcpApi, secrets as secretsApi, type AdminUser
 import JsonEditor from "@/components/json-editor";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowLeft, Plus, Trash2, Shield, ShieldOff, Baby, Edit2, RefreshCw, Eye, EyeOff, Key } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Shield, ShieldOff, Baby, RefreshCw, Eye, EyeOff, Key } from "lucide-react";
 import Link from "next/link";
 
 export default function AdminPage() {
@@ -139,46 +139,50 @@ function UserManagement({ userId }: { userId: string }) {
 
 function MCPManagement({ userId }: { userId: string }) {
   const [servers, setServers] = useState<MCPServer[]>([]);
-  const [showAdd, setShowAdd] = useState(false);
-  const [editServer, setEditServer] = useState<string | null>(null);
-  const [editJson, setEditJson] = useState("");
-  const [addName, setAddName] = useState("");
-  const [addJson, setAddJson] = useState("");
+  const [configJson, setConfigJson] = useState("");
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [status, setStatus] = useState("");
-  const [busy, setBusy] = useState<string | null>(null); // null or description of what's happening
+  const [busy, setBusy] = useState<string | null>(null);
 
-  const reload = () => mcpApi.listServers().then((d) => setServers(d.servers)).catch(() => {});
+  const reload = async () => {
+    try {
+      const [serverData, configData] = await Promise.all([
+        mcpApi.listServers(),
+        mcpApi.getFullConfig(userId),
+      ]);
+      setServers(serverData.servers);
+      // Only update the editor if not actively editing
+      if (!editing) {
+        setConfigJson(JSON.stringify(configData, null, 2));
+      }
+      setConfigLoaded(true);
+    } catch {
+      // If config endpoint fails (e.g. not admin), just load servers
+      try {
+        const serverData = await mcpApi.listServers();
+        setServers(serverData.servers);
+      } catch {}
+    }
+  };
 
   useEffect(() => { reload(); }, []);
 
-  const handleAdd = async () => {
-    if (!addJson.trim()) return;
+  const handleSave = async () => {
+    if (!configJson.trim()) return;
     try {
-      const parsed = JSON.parse(addJson);
-
-      // Detect Cursor-style format: {"mcpServers": {"name": {...}, ...}}
-      if (parsed.mcpServers && typeof parsed.mcpServers === "object") {
-        const names = Object.keys(parsed.mcpServers);
-        setBusy(`Connecting to ${names.length} server(s)...`);
-        setStatus("");
-        // Send the full object — gateway extracts mcpServers
-        await mcpApi.addServer(userId, names[0] || "import", parsed);
-        setStatus(`Imported ${names.length} server(s): ${names.join(", ")}`);
-      } else {
-        // Single server — name is required
-        if (!addName.trim()) {
-          setStatus("Server name is required for single-server config");
-          return;
-        }
-        setBusy(`Connecting to ${addName.trim()}...`);
-        setStatus("");
-        const result = await mcpApi.addServer(userId, addName.trim(), parsed);
-        setStatus(result.connected ? `Added — ${result.tools.length} tool(s)` : "Added but connection failed — check config");
-      }
-      setShowAdd(false);
-      setAddName("");
-      setAddJson("");
-      reload();
+      const parsed = JSON.parse(configJson);
+      const serverCount = Object.keys(parsed.mcpServers || parsed).length;
+      setBusy(`Saving and connecting to ${serverCount} server(s)...`);
+      setStatus("");
+      const result = await mcpApi.saveFullConfig(userId, parsed);
+      setServers(result.servers);
+      const connected = result.servers.filter((s: MCPServer) => s.connected).length;
+      setStatus(`Saved — ${connected}/${result.servers.length} server(s) connected`);
+      setEditing(false);
+      // Refresh the config to get the canonical format back
+      const fresh = await mcpApi.getFullConfig(userId);
+      setConfigJson(JSON.stringify(fresh, null, 2));
     } catch (err) {
       if (err instanceof SyntaxError) {
         setStatus("Invalid JSON");
@@ -190,36 +194,13 @@ function MCPManagement({ userId }: { userId: string }) {
     }
   };
 
-  const handleEdit = async (name: string) => {
-    const data = await mcpApi.getConfig(name, userId);
-    setEditServer(name);
-    setEditJson(JSON.stringify(data.config, null, 2));
-  };
-
-  const handleSaveEdit = async () => {
-    if (!editServer) return;
-    try {
-      const config = JSON.parse(editJson);
-      setBusy(`Reconnecting to ${editServer}...`);
-      setStatus("");
-      const result = await mcpApi.addServer(userId, editServer, config);
-      setStatus(result.connected ? `Updated — ${result.tools.length} tool(s)` : "Updated but connection failed — check config");
-      setEditServer(null);
-      reload();
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed");
-    } finally {
-      setBusy(null);
-    }
-  };
-
   const handleRestart = async () => {
     setBusy("Restarting all MCP servers...");
     setStatus("");
     try {
       const d = await mcpApi.restart(userId);
       setStatus(`Restarted — ${d.tools.length} tool(s)`);
-      reload();
+      await reload();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Restart failed");
     } finally {
@@ -235,12 +216,10 @@ function MCPManagement({ userId }: { userId: string }) {
           <button onClick={handleRestart} disabled={!!busy} className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-30" title="Restart all">
             <RefreshCw size={14} />
           </button>
-          <button onClick={() => setShowAdd(!showAdd)} className="flex items-center gap-1 text-xs text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
-            <Plus size={14} /> Add
-          </button>
         </div>
       </div>
 
+      {/* Status / busy indicators */}
       {busy && (
         <div className="flex items-center gap-2 text-xs text-[var(--color-accent)] mb-3 animate-fade-in">
           <span className="typing-dot w-1.5 h-1.5 rounded-full bg-[var(--color-accent)]" />
@@ -250,61 +229,59 @@ function MCPManagement({ userId }: { userId: string }) {
         </div>
       )}
       {status && !busy && (
-        <p className={`text-xs mb-3 animate-fade-in ${status.includes("failed") || status.includes("Failed") ? "text-[var(--color-error)]" : "text-[var(--color-accent)]"}`}>{status}</p>
+        <p className={`text-xs mb-3 animate-fade-in ${status.includes("failed") || status.includes("Failed") || status.includes("Invalid") ? "text-[var(--color-error)]" : "text-[var(--color-accent)]"}`}>{status}</p>
       )}
 
-      {showAdd && (
-        <div className="bg-[var(--color-bg-secondary)] rounded-xl p-4 mb-4 space-y-3 animate-fade-in border border-[var(--color-border)]">
-          <JsonEditor
-            value={addJson}
-            onChange={setAddJson}
-            rows={8}
-            placeholder={'Paste Cursor/Claude Desktop format:\n{\n  "mcpServers": {\n    "wandb": {\n      "command": "uvx",\n      "args": ["--from", "git+https://...", "server"]\n    }\n  }\n}'}
-          />
-          <input
-            type="text"
-            placeholder="Server name (required for single server, ignored for bulk import)"
-            value={addName}
-            onChange={(e) => setAddName(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
-          />
-          <p className="text-xs text-[var(--color-text-muted)]">Use {"`${SECRET_NAME}`"} in configs to reference secrets. Bulk import detects the {"`mcpServers`"} wrapper automatically.</p>
-          <button onClick={handleAdd} disabled={!!busy} className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm font-medium disabled:opacity-50">{busy ? "Connecting..." : "Add & validate"}</button>
+      {/* Single JSON editor for the full config — Cursor style */}
+      <div className="mb-4">
+        <JsonEditor
+          value={configJson}
+          onChange={(v) => { setConfigJson(v); setEditing(true); }}
+          rows={12}
+          placeholder={'{\n  "mcpServers": {\n    "fetch": {\n      "command": "python",\n      "args": ["-m", "mcp_server_fetch"]\n    }\n  }\n}'}
+        />
+        <div className="flex items-center gap-2 mt-2">
+          <button
+            onClick={handleSave}
+            disabled={!!busy || !configLoaded}
+            className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm font-medium disabled:opacity-50"
+          >
+            {busy ? "Connecting..." : "Save & reconnect"}
+          </button>
+          {editing && (
+            <button
+              onClick={() => { setEditing(false); reload(); }}
+              disabled={!!busy}
+              className="px-4 py-2 rounded-lg bg-[var(--color-bg-hover)] text-sm disabled:opacity-50"
+            >
+              Discard
+            </button>
+          )}
+          <p className="text-xs text-[var(--color-text-muted)] flex-1">
+            Use {"`${SECRET_NAME}`"} to reference secrets. {"`${file:SECRET_NAME}`"} for files (kubeconfig, certs).
+          </p>
         </div>
-      )}
+      </div>
 
-      {/* Edit panel */}
-      {editServer && (
-        <div className="bg-[var(--color-bg-secondary)] rounded-xl p-4 mb-4 space-y-3 animate-fade-in border border-[var(--color-accent)]">
-          <div className="text-sm font-medium">Editing: {editServer}</div>
-          <JsonEditor value={editJson} onChange={setEditJson} rows={6} />
-          <div className="flex gap-2">
-            <button onClick={handleSaveEdit} disabled={!!busy} className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm font-medium disabled:opacity-50">{busy ? "Connecting..." : "Save & reconnect"}</button>
-            <button onClick={() => setEditServer(null)} disabled={!!busy} className="px-4 py-2 rounded-lg bg-[var(--color-bg-hover)] text-sm disabled:opacity-50">Cancel</button>
-          </div>
-        </div>
-      )}
-
+      {/* Server status cards */}
       <div className="space-y-2">
         {servers.map((s) => (
           <div key={s.name} className="flex items-center gap-3 px-4 py-3 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
-            <div className={`w-2 h-2 rounded-full ${s.connected ? "bg-[var(--color-success)]" : "bg-[var(--color-error)]"}`} />
+            <div className={`w-2 h-2 rounded-full shrink-0 ${s.connected ? "bg-[var(--color-success)]" : "bg-[var(--color-error)]"}`} />
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium">{s.name}</div>
               <div className="text-xs text-[var(--color-text-muted)] truncate">
-                {s.transport === "http" ? s.url : `${s.command} ${(s.args || []).join(" ")}`}
-                {s.tools.length > 0 && ` · ${s.tools.length} tool(s)`}
+                {s.transport === "http" ? s.url : `${s.command} ${(s.args || []).map(String).join(" ")}`}
+                {s.tools.length > 0 && ` · ${s.tools.join(", ")}`}
               </div>
             </div>
-            <button onClick={() => handleEdit(s.name)} className="p-1.5 rounded-lg hover:bg-[var(--color-bg-hover)] text-[var(--color-text-muted)]">
-              <Edit2 size={14} />
-            </button>
-            <button onClick={() => mcpApi.removeServer(s.name, userId).then(reload)} className="p-1.5 rounded-lg hover:bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] hover:text-[var(--color-error)]">
-              <Trash2 size={14} />
-            </button>
+            <span className={`text-xs shrink-0 ${s.connected ? "text-[var(--color-success)]" : "text-[var(--color-error)]"}`}>
+              {s.connected ? `${s.tools.length} tool(s)` : "disconnected"}
+            </span>
           </div>
         ))}
-        {servers.length === 0 && <p className="text-sm text-[var(--color-text-muted)]">No MCP servers configured</p>}
+        {servers.length === 0 && !configLoaded && <p className="text-sm text-[var(--color-text-muted)]">Loading...</p>}
+        {servers.length === 0 && configLoaded && <p className="text-sm text-[var(--color-text-muted)]">No MCP servers configured — paste config above</p>}
       </div>
     </section>
   );

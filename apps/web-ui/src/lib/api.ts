@@ -189,6 +189,15 @@ export interface MCPServer {
 export const mcp = {
   listServers: () => request<{ servers: MCPServer[] }>("/mcp/servers"),
 
+  getFullConfig: (adminUserId: string) =>
+    request<{ mcpServers: Record<string, unknown> }>(`/mcp/config?admin_user_id=${adminUserId}`),
+
+  saveFullConfig: (adminUserId: string, config: Record<string, unknown>) =>
+    request<{ status: string; servers: MCPServer[] }>("/mcp/config", {
+      method: "PUT",
+      body: JSON.stringify({ admin_user_id: adminUserId, config }),
+    }),
+
   getConfig: (name: string, adminUserId: string) =>
     request<{ name: string; config: Record<string, unknown> }>(
       `/mcp/servers/${name}/config?admin_user_id=${adminUserId}`
