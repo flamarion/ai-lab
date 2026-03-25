@@ -218,8 +218,6 @@ export const mcp = {
       body: JSON.stringify({ admin_user_id: adminUserId }),
     }),
 
-  getAuthUrls: () =>
-    request<{ auth_urls: { url: string; timestamp: number }[] }>("/mcp/auth-urls"),
 };
 
 // --- Secrets ---

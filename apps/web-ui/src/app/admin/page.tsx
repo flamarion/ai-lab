@@ -5,7 +5,7 @@ import { admin as adminApi, mcp as mcpApi, secrets as secretsApi, type AdminUser
 import JsonEditor from "@/components/json-editor";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowLeft, Plus, Trash2, Shield, ShieldOff, Baby, RefreshCw, Eye, EyeOff, Key, Edit2, ExternalLink } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Shield, ShieldOff, Baby, RefreshCw, Eye, EyeOff, Key, Edit2 } from "lucide-react";
 import Link from "next/link";
 
 export default function AdminPage() {
@@ -144,7 +144,6 @@ function MCPManagement({ userId }: { userId: string }) {
   const [editing, setEditing] = useState(false);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const [authUrls, setAuthUrls] = useState<{ url: string; timestamp: number }[]>([]);
 
   const reload = async () => {
     try {
@@ -170,17 +169,6 @@ function MCPManagement({ userId }: { userId: string }) {
   };
 
   useEffect(() => { reload(); }, []);
-
-  // Poll for OAuth auth URLs every 5 seconds (stops when none pending)
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const data = await mcpApi.getAuthUrls();
-        setAuthUrls(data.auth_urls);
-      } catch {}
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
 
   const handleSave = async () => {
     if (!configJson.trim()) return;
@@ -258,33 +246,6 @@ function MCPManagement({ userId }: { userId: string }) {
       )}
       {status && !busy && (
         <p className={`text-xs mb-3 animate-fade-in ${status.includes("failed") || status.includes("Failed") || status.includes("Invalid") ? "text-[var(--color-error)]" : "text-[var(--color-accent)]"}`}>{status}</p>
-      )}
-
-      {/* OAuth auth URLs — shown when MCP servers need browser authentication */}
-      {authUrls.length > 0 && (
-        <div className="mb-4 space-y-2 animate-fade-in">
-          {authUrls.map((a, i) => {
-            // Extract the hostname from the URL for display
-            const host = new URL(a.url).hostname;
-            return (
-              <div key={i} className="flex items-center gap-3 px-4 py-3 rounded-xl bg-[var(--color-accent-soft)] border border-[var(--color-accent)]">
-                <ExternalLink size={16} className="text-[var(--color-accent)] shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-[var(--color-accent)]">Authentication required — {host}</div>
-                  <div className="text-xs text-[var(--color-text-secondary)] mt-0.5">Click to sign in and authorize this MCP server</div>
-                </div>
-                <a
-                  href={a.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-xs font-medium hover:bg-[var(--color-accent-hover)] transition-colors shrink-0"
-                >
-                  Sign in
-                </a>
-              </div>
-            );
-          })}
-        </div>
       )}
 
       {/* Server status cards */}
