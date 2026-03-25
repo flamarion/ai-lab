@@ -54,9 +54,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const updatePreferences = useCallback(
     async (prefs: Record<string, unknown>) => {
       if (!user) return;
-      const merged = { ...user.preferences, ...prefs };
-      await auth.updatePreferences(user.user_id, merged);
-      setUser((prev) => (prev ? { ...prev, preferences: merged } : prev));
+      // Send only the new preferences — don't merge with the full blob
+      // (prevents accumulating stale/large data in preferences)
+      await auth.updatePreferences(user.user_id, prefs);
+      setUser((prev) => (prev ? { ...prev, preferences: prefs } : prev));
     },
     [user]
   );
