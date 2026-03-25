@@ -16,23 +16,14 @@ services:
       dockerfile: services/llm-gateway/Dockerfile
     expose:
       - "8000"
-    ports:
-      # MCP OAuth callback ports — mcp-remote listens here so the host
-      # browser redirect (http://localhost:<port>/callback) reaches the container.
-      - "9100:9100"
-      - "9101:9101"
-      - "9102:9102"
-      - "9103:9103"
-      - "9104:9104"
     env_file:
       - ../../.env
     environment:
       - PYTHONPATH=/app:/app/shared/python
       - DATABASE_URL=${DATABASE_URL:-postgresql://ailab:ailab_dev@192.168.1.202:5432/ailab}
     volumes:
-      # MCP OAuth token cache — shared between host and container.
-      # mcp-remote writes tokens here after browser auth, and reads
-      # them on subsequent connections (survives container restarts).
+      # MCP OAuth token cache — mcp-remote stores tokens here after
+      # manual auth on the host. Survives container restarts.
       - ~/.mcp-auth:/root/.mcp-auth
     restart: unless-stopped
 
