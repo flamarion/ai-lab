@@ -3,7 +3,7 @@
 import { useAuth } from "@/lib/auth-context";
 import { chat as chatApi, documents as docsApi, auth as authApi, memory as memApi, type Memory } from "@/lib/api";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Upload, Trash2, FileText } from "lucide-react";
 import Link from "next/link";
 
@@ -37,16 +37,21 @@ export default function SettingsPage() {
     if (user) memApi.list(user.user_id).then((d) => setMemories(d.memories)).catch(() => {});
   }, [user]);
 
-  // Auto-save on any change (debounced)
+  // Auto-save on change (debounced, skips initial mount)
+  const hasInteracted = useRef(false);
   useEffect(() => {
     if (!user) return;
+    if (!hasInteracted.current) {
+      hasInteracted.current = true;
+      return; // Skip first render — don't overwrite DB with init values
+    }
     const timeout = setTimeout(() => {
       setSaving(true);
       updatePreferences({
         model, temperature, top_p: topP, num_predict: numPredict,
         system_prompt: systemPrompt, use_rag: useRag, use_tools: useTools,
       }).finally(() => setSaving(false));
-    }, 500); // 500ms debounce
+    }, 500);
     return () => clearTimeout(timeout);
   }, [model, temperature, topP, numPredict, systemPrompt, useRag, useTools]); // eslint-disable-line react-hooks/exhaustive-deps
 
