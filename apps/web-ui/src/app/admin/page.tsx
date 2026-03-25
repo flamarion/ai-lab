@@ -162,6 +162,8 @@ function MCPManagement({ userId }: { userId: string }) {
       try {
         const serverData = await mcpApi.listServers();
         setServers(serverData.servers);
+        setConfigLoaded(true);
+        if (!editing) setConfigJson('{\n  "mcpServers": {}\n}');
       } catch {}
     }
   };
@@ -172,7 +174,16 @@ function MCPManagement({ userId }: { userId: string }) {
     if (!configJson.trim()) return;
     try {
       const parsed = JSON.parse(configJson);
-      const serverCount = Object.keys(parsed.mcpServers || parsed).length;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        setStatus("Config must be a JSON object");
+        return;
+      }
+      const servers = parsed.mcpServers || parsed;
+      if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
+        setStatus("mcpServers must be a JSON object");
+        return;
+      }
+      const serverCount = Object.keys(servers).length;
       setBusy(`Saving and connecting to ${serverCount} server(s)...`);
       setStatus("");
       const result = await mcpApi.saveFullConfig(userId, parsed);

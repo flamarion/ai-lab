@@ -532,6 +532,9 @@ async def save_full_mcp_config(request: SaveMCPConfigRequest):
     servers = request.config.get("mcpServers", request.config)
     if not isinstance(servers, dict):
         raise HTTPException(status_code=400, detail="Config must be an object")
+    for name, cfg in servers.items():
+        if not isinstance(cfg, dict):
+            raise HTTPException(status_code=400, detail=f"Server '{name}' config must be an object")
 
     await mcp_manager.save_config(servers)
     await mcp_manager.reload()
