@@ -58,6 +58,12 @@ async def lifespan(app: FastAPI):
     # Services become available as they connect. This prevents slow/hanging
     # external services from blocking login, health checks, etc.
     async def _init_services():
+        # Yield to let uvicorn fully start accepting connections.
+        # Without this, CPU-intensive MCP initialization (spawning
+        # subprocesses, parsing large JSON tool schemas) starves the
+        # single-threaded asyncio event loop and blocks TCP accepts.
+        await asyncio.sleep(2)
+
         # Weave
         if settings.WEAVE_ENABLED:
             try:
@@ -95,6 +101,8 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning("Migration failed: %s — schema may be incomplete.", e)
 
+        await asyncio.sleep(0)  # yield to event loop
+
         # Qdrant
         try:
             vector_store.init_store()
@@ -102,7 +110,9 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Failed to connect to Qdrant: %s — RAG disabled.", e)
 
-        # MCP servers
+        await asyncio.sleep(0)  # yield to event loop
+
+        # MCP servers (can be very slow — downloads packages, spawns subprocesses)
         try:
             await mcp_manager.start()
         except Exception as e:
