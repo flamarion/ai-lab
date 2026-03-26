@@ -102,20 +102,22 @@ export interface StatusEvent {
   detail: string;
 }
 
+export interface ChatParams {
+  message: string;
+  model?: string;
+  temperature?: number;
+  top_p?: number;
+  num_predict?: number;
+  system_prompt?: string;
+  use_rag?: boolean;
+  use_tools?: boolean;
+  user_id?: string;
+  conversation_id?: string;
+  history?: ChatMessage[];
+}
+
 export const chat = {
-  send: (params: {
-    message: string;
-    model?: string;
-    temperature?: number;
-    top_p?: number;
-    num_predict?: number;
-    system_prompt?: string;
-    use_rag?: boolean;
-    use_tools?: boolean;
-    user_id?: string;
-    conversation_id?: string;
-    history?: ChatMessage[];
-  }) =>
+  send: (params: ChatParams) =>
     request<ChatResponse>("/chat", {
       method: "POST",
       body: JSON.stringify(params),
@@ -126,19 +128,7 @@ export const chat = {
    * Use for real-time status updates (thinking, tool calls, etc.)
    */
   sendStream: async (
-    params: {
-      message: string;
-      model?: string;
-      temperature?: number;
-      top_p?: number;
-      num_predict?: number;
-      system_prompt?: string;
-      use_rag?: boolean;
-      use_tools?: boolean;
-      user_id?: string;
-      conversation_id?: string;
-      history?: ChatMessage[];
-    },
+    params: ChatParams,
     onStatus: (event: StatusEvent) => void,
   ): Promise<ChatResponse> => {
     const res = await fetch(`${BASE}/chat/stream`, {
