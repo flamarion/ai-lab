@@ -154,8 +154,8 @@ export default function ChatMessage({ role, content, toolsUsed, isStreaming, sta
           </ReactMarkdown>
         </div>
 
-        {/* Streaming indicator with status */}
-        {isStreaming && (
+        {/* Streaming indicator */}
+        {isStreaming && !content && (
           <div className="flex items-center gap-2 mt-2">
             <span className="typing-dot w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)]" />
             <span className="typing-dot w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)]" />
@@ -164,6 +164,10 @@ export default function ChatMessage({ role, content, toolsUsed, isStreaming, sta
               <span className="text-xs text-[var(--color-text-muted)] ml-1">{statusText}</span>
             )}
           </div>
+        )}
+        {/* Blinking cursor while tokens are arriving */}
+        {isStreaming && content && (
+          <span className="inline-block w-2 h-4 bg-[var(--color-text-muted)] animate-pulse ml-0.5 align-text-bottom" />
         )}
       </div>
     </div>

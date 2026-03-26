@@ -130,6 +130,7 @@ export const chat = {
   sendStream: async (
     params: ChatParams,
     onStatus: (event: StatusEvent) => void,
+    onToken?: (text: string) => void,
   ): Promise<ChatResponse> => {
     const res = await fetch(`${BASE}/chat/stream`, {
       method: "POST",
@@ -162,6 +163,8 @@ export const chat = {
           const data = JSON.parse(line.slice(6));
           if (eventType === "status") {
             onStatus(data as StatusEvent);
+          } else if (eventType === "token") {
+            onToken?.(data.text);
           } else if (eventType === "done") {
             result = data as ChatResponse;
           } else if (eventType === "error") {

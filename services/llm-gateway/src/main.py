@@ -828,43 +828,31 @@ async def chat_stream(request: ChatRequest):
 
             yield f"event: status\ndata: {_json.dumps({'status': 'thinking', 'detail': f'Asking {model}...'})}\n\n"
 
-            # For tool use: run chat in a background task and consume
-            # status events via a queue (can't yield from inside await)
             tools_used = []
+            response_text = ""
+
             if request.use_tools:
-                status_queue: asyncio.Queue = asyncio.Queue()
-
-                async def _on_status(status: str, detail: str):
-                    await status_queue.put({"status": status, "detail": detail})
-
-                async def _run_chat():
-                    return await client.chat_with_tools(
-                        model=model, messages=messages, options=options,
-                        on_status=_on_status, user_id=request.user_id,
-                    )
-
-                chat_task = asyncio.create_task(_run_chat())
-
-                # Yield status events as they come in while chat is running
-                while not chat_task.done():
-                    try:
-                        event = await asyncio.wait_for(status_queue.get(), timeout=0.5)
-                        yield f"event: status\ndata: {_json.dumps(event)}\n\n"
-                    except asyncio.TimeoutError:
-                        pass  # No event yet, check if task is done
-
-                # Drain any remaining events
-                while not status_queue.empty():
-                    event = await status_queue.get()
-                    yield f"event: status\ndata: {_json.dumps(event)}\n\n"
-
-                response_text, tools_used = chat_task.result()
+                # Tool rounds are non-streaming; final answer streams tokens
+                async for event in client.chat_with_tools_stream(
+                    model=model, messages=messages, options=options,
+                    user_id=request.user_id,
+                ):
+                    if event["type"] == "status":
+                        yield f"event: status\ndata: {_json.dumps({'status': event['status'], 'detail': event['detail']})}\n\n"
+                    elif event["type"] == "token":
+                        response_text += event["text"]
+                        yield f"event: token\ndata: {_json.dumps({'text': event['text']})}\n\n"
+                    elif event["type"] == "done":
+                        tools_used = event["tools_used"]
                 if tools_used:
                     logger.info("Tools used: %s", [t["name"] for t in tools_used])
             else:
-                response_text = await client.chat(
+                # Stream tokens directly from Ollama
+                async for token in client.chat_stream(
                     model=model, messages=messages, options=options,
-                )
+                ):
+                    response_text += token
+                    yield f"event: token\ndata: {_json.dumps({'text': token})}\n\n"
 
             # Persist
             is_new_conversation = not request.conversation_id
