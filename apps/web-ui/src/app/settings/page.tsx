@@ -1,6 +1,7 @@
 "use client";
 
 import { useAuth } from "@/lib/auth-context";
+import { type AuthResponse } from "@/lib/api";
 import { chat as chatApi, documents as docsApi, auth as authApi, memory as memApi, type Memory } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -8,15 +9,29 @@ import { ArrowLeft, Upload, Trash2, FileText } from "lucide-react";
 import Link from "next/link";
 
 export default function SettingsPage() {
-  const { user, loading, updatePreferences } = useAuth();
+  const { user, loading } = useAuth();
   const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && !user) router.replace("/login");
+  }, [user, loading, router]);
+
+  if (loading || !user) return null;
+
+  // Key on user_id so the form remounts (and re-initializes state) on user switch
+  return <SettingsForm key={user.user_id} user={user} />;
+}
+
+function SettingsForm({ user }: { user: AuthResponse }) {
+  const { updatePreferences } = useAuth();
   const [models, setModels] = useState<string[]>([]);
   const [docs, setDocs] = useState<{ id: string; source: string; num_chunks: number }[]>([]);
   const [saving, setSaving] = useState(false);
   const [pinSection, setPinSection] = useState({ current: "", new_pin: "", message: "" });
 
-  // Local form state initialized from preferences
-  const prefs = (user?.preferences || {}) as Record<string, unknown>;
+  // Local form state — initialized from user.preferences which is guaranteed
+  // to be loaded because this component only mounts after auth completes.
+  const prefs = (user.preferences || {}) as Record<string, unknown>;
   const [model, setModel] = useState((prefs.model as string) || "Auto (recommended)");
   const [temperature, setTemperature] = useState((prefs.temperature as number) ?? 0.7);
   const [topP, setTopP] = useState((prefs.top_p as number) ?? 0.9);
@@ -28,19 +43,14 @@ export default function SettingsPage() {
   const [newMemory, setNewMemory] = useState("");
 
   useEffect(() => {
-    if (!loading && !user) router.replace("/login");
-  }, [user, loading, router]);
-
-  useEffect(() => {
     chatApi.models().then((d) => setModels(d.models)).catch(() => {});
     docsApi.list().then((d) => setDocs(d.documents)).catch(() => {});
-    if (user) memApi.list(user.user_id).then((d) => setMemories(d.memories)).catch(() => {});
-  }, [user]);
+    memApi.list(user.user_id).then((d) => setMemories(d.memories)).catch(() => {});
+  }, [user.user_id]);
 
   // Auto-save on change (debounced, skips initial mount)
   const hasInteracted = useRef(false);
   useEffect(() => {
-    if (!user) return;
     if (!hasInteracted.current) {
       hasInteracted.current = true;
       return; // Skip first render — don't overwrite DB with init values
@@ -74,7 +84,7 @@ export default function SettingsPage() {
   };
 
   const handleChangePin = async () => {
-    if (!user || pinSection.new_pin.length < 4) {
+    if (pinSection.new_pin.length < 4) {
       setPinSection((s) => ({ ...s, message: "PIN must be at least 4 digits" }));
       return;
     }
@@ -85,8 +95,6 @@ export default function SettingsPage() {
       setPinSection((s) => ({ ...s, message: err instanceof Error ? err.message : "Failed" }));
     }
   };
-
-  if (loading || !user) return null;
 
   return (
     <div className="min-h-screen">
@@ -188,7 +196,7 @@ export default function SettingsPage() {
               <button
                 onClick={async () => {
                   if (!confirm("Delete this memory?")) return;
-                  await memApi.delete(m.id, user!.user_id);
+                  await memApi.delete(m.id, user.user_id);
                   setMemories((prev) => prev.filter((x) => x.id !== m.id));
                 }}
                 className="text-[var(--color-text-muted)] hover:text-[var(--color-error)] shrink-0 mt-0.5"
@@ -203,7 +211,7 @@ export default function SettingsPage() {
               value={newMemory}
               onChange={(e) => setNewMemory(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && newMemory.trim() && user) {
+                if (e.key === "Enter" && newMemory.trim()) {
                   memApi.add(user.user_id, newMemory.trim()).then((r) => {
                     setMemories((prev) => [...prev, { id: r.id, content: newMemory.trim(), created_at: "", updated_at: "" }]);
                     setNewMemory("");
@@ -215,7 +223,7 @@ export default function SettingsPage() {
             />
             <button
               onClick={async () => {
-                if (!newMemory.trim() || !user) return;
+                if (!newMemory.trim()) return;
                 const r = await memApi.add(user.user_id, newMemory.trim());
                 setMemories((prev) => [...prev, { id: r.id, content: newMemory.trim(), created_at: "", updated_at: "" }]);
                 setNewMemory("");
