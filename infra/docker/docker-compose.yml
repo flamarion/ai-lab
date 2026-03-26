@@ -45,8 +45,6 @@ services:
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:rw
       - searxng-data:/var/cache/searxng:rw
-    environment:
-      - SEARXNG_BASE_URL=${SEARXNG_BASE_URL:-http://localhost/search/}
     cap_drop:
       - ALL
     cap_add:

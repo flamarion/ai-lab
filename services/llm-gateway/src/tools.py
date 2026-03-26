@@ -243,12 +243,25 @@ def web_search(query: str, num_results: int = 5) -> str:
     Returns a formatted list of results with title, URL, and snippet.
     """
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=15, follow_redirects=True) as client:
             resp = client.get(
                 f"{_SEARXNG_URL}/search",
                 params={"q": query, "format": "json", "categories": "general"},
+                headers={
+                    "X-Forwarded-For": "127.0.0.1",
+                    "X-Real-IP": "127.0.0.1",
+                },
             )
+            if resp.status_code != 200:
+                logger.warning("SearXNG returned %d: %s", resp.status_code, resp.text[:200])
             resp.raise_for_status()
+
+            # SearXNG may return HTML instead of JSON if format param was ignored
+            content_type = resp.headers.get("content-type", "")
+            if "json" not in content_type:
+                logger.warning("SearXNG returned %s instead of JSON", content_type)
+                return f"Error: search returned HTML instead of JSON (check SearXNG formats config)"
+
             data = resp.json()
 
         results = data.get("results", [])[:num_results]
@@ -265,6 +278,7 @@ def web_search(query: str, num_results: int = 5) -> str:
     except httpx.ConnectError:
         return "Error: search service unavailable (SearXNG not running)"
     except Exception as e:
+        logger.error("web_search failed: %s", e)
         return f"Error searching: {e}"
 
 
