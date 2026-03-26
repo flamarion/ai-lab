@@ -86,6 +86,8 @@ export default function ChatPage() {
         top_k: (prefs.top_k as number) ?? DEFAULT_PREFS.top_k,
         num_predict: (prefs.num_predict as number) ?? DEFAULT_PREFS.num_predict,
         repeat_penalty: (prefs.repeat_penalty as number) ?? DEFAULT_PREFS.repeat_penalty,
+        seed: (prefs.seed as number) ?? undefined,
+        num_ctx: (prefs.num_ctx as number) ?? undefined,
         system_prompt: (prefs.system_prompt as string) || undefined,
         use_rag: ragEnabled ?? (prefs.use_rag as boolean) ?? DEFAULT_PREFS.use_rag,
         use_tools: toolsEnabled ?? (prefs.use_tools as boolean) ?? DEFAULT_PREFS.use_tools,

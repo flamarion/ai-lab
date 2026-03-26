@@ -748,7 +748,7 @@ async def _load_messages(request: ChatRequest, conversation_id: str) -> list[dic
 
 async def _persist_turn(
     request: ChatRequest, conversation_id: str, model: str,
-    response_text: str, is_new: bool,
+    response_text: str, is_new: bool, messages: list[dict],
 ) -> None:
     """Save the conversation turn to DB and kick off background tasks."""
     if not db.is_available():
@@ -766,7 +766,7 @@ async def _persist_turn(
             _generate_title(conversation_id, request.message, response_text, model)
         )
 
-    _maybe_extract_memories(request, [], response_text, model)
+    _maybe_extract_memories(request, messages, response_text, model)
 
 
 async def _get_is_child(user_id: str | None) -> bool:
@@ -896,7 +896,7 @@ async def chat_stream(request: ChatRequest):
             await client._trace_streaming_chat(model, messages, options, response_text)
 
             is_new = not request.conversation_id
-            await _persist_turn(request, conversation_id, model, response_text, is_new)
+            await _persist_turn(request, conversation_id, model, response_text, is_new, messages)
 
             # Send final result
             yield f"event: done\ndata: {_json.dumps({'response': response_text, 'model': model, 'conversation_id': conversation_id, 'tools_used': tools_used})}\n\n"
@@ -967,7 +967,7 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=502, detail=f"Ollama error: {e}")
 
     is_new = not request.conversation_id
-    await _persist_turn(request, conversation_id, model, response_text, is_new)
+    await _persist_turn(request, conversation_id, model, response_text, is_new, messages)
 
     return ChatResponse(
         response=response_text,
