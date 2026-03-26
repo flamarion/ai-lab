@@ -148,7 +148,7 @@ function MCPManagement({ userId }: { userId: string }) {
   const reload = async () => {
     try {
       const [serverData, configData] = await Promise.all([
-        mcpApi.listServers(),
+        mcpApi.listServers(userId),
         mcpApi.getFullConfig(userId),
       ]);
       setServers(serverData.servers);
@@ -160,7 +160,7 @@ function MCPManagement({ userId }: { userId: string }) {
     } catch {
       // If config endpoint fails (e.g. not admin), just load servers
       try {
-        const serverData = await mcpApi.listServers();
+        const serverData = await mcpApi.listServers(userId);
         setServers(serverData.servers);
         setConfigLoaded(true);
         if (!editing) setConfigJson('{\n  "mcpServers": {}\n}');

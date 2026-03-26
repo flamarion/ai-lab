@@ -25,10 +25,14 @@ export default function LoginPage() {
     const next = [...pin];
     // Handle paste of full PIN
     if (value.length > 1) {
-      const digits = value.slice(0, 8).split("");
-      digits.forEach((d, i) => { if (i < 8) next[i] = d; });
-      while (next.length < digits.length) next.push("");
-      setPin(next.slice(0, Math.max(4, digits.length)));
+      const digits = value.replace(/\D/g, "").slice(0, 8).split("");
+      const newPin = digits.map((d) => d);
+      // Pad to at least 4 boxes
+      while (newPin.length < 4) newPin.push("");
+      setPin(newPin);
+      // Focus last filled digit
+      const lastIdx = Math.min(digits.length, newPin.length) - 1;
+      setTimeout(() => pinRefs.current[lastIdx]?.focus(), 10);
       return;
     }
     next[index] = value;

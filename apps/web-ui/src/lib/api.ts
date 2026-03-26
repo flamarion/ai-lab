@@ -256,7 +256,7 @@ export interface MCPServer {
 }
 
 export const mcp = {
-  listServers: () => request<{ servers: MCPServer[] }>("/mcp/servers"),
+  listServers: (adminUserId: string) => request<{ servers: MCPServer[] }>(`/mcp/servers?admin_user_id=${adminUserId}`),
 
   getFullConfig: (adminUserId: string) =>
     request<{ mcpServers: Record<string, unknown> }>(`/mcp/config?admin_user_id=${adminUserId}`),

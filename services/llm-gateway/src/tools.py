@@ -193,9 +193,10 @@ def current_time() -> str:
     return now.strftime("%Y-%m-%d %H:%M:%S UTC (%A)")
 
 
-# Global reference set by main.py before tool calls — allows save_memory
-# to access the current user_id without threading it through the tool interface.
-_current_user_id: str | None = None
+# User ID passed per-request via execute_tool (no global state).
+# Stored in a thread-local so save_memory can access it from a threadpool.
+import threading as _threading
+_tool_context = _threading.local()
 
 
 def save_memory(fact: str) -> str:
@@ -207,7 +208,8 @@ def save_memory(fact: str) -> str:
     import asyncio
     from src import db
 
-    if not _current_user_id:
+    user_id = getattr(_tool_context, "user_id", None)
+    if not user_id:
         return "Error: no user context available"
     if not fact.strip():
         return "Error: empty fact"
@@ -215,16 +217,14 @@ def save_memory(fact: str) -> str:
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            # We're in a threadpool (called from execute_tool via run_in_executor)
-            # Create a coroutine and run it in the event loop
             import concurrent.futures
             future = asyncio.run_coroutine_threadsafe(
-                db.add_user_memory(_current_user_id, fact.strip()),
+                db.add_user_memory(user_id, fact.strip()),
                 loop,
             )
             future.result(timeout=5)
         else:
-            asyncio.run(db.add_user_memory(_current_user_id, fact.strip()))
+            asyncio.run(db.add_user_memory(user_id, fact.strip()))
         return f"Remembered: {fact.strip()}"
     except Exception as e:
         return f"Error saving memory: {e}"
@@ -408,12 +408,15 @@ def get_tool_schemas() -> list[dict]:
     return [entry["schema"] for entry in TOOL_REGISTRY.values()]
 
 
-def execute_tool(name: str, arguments: dict) -> str:
+def execute_tool(name: str, arguments: dict, user_id: str | None = None) -> str:
     """Execute a tool by name with the given arguments.
 
-    Returns the tool result as a string, or an error message if the tool
-    doesn't exist or fails.
+    user_id is set on thread-local so save_memory can access it safely
+    without global mutable state (no race conditions under concurrent requests).
     """
+    # Set user context on thread-local for this execution
+    _tool_context.user_id = user_id
+
     entry = TOOL_REGISTRY.get(name)
     if not entry:
         logger.warning("Unknown tool requested: %s", name)

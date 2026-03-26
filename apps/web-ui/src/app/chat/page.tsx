@@ -121,11 +121,12 @@ export default function ChatPage() {
     // Reset per-chat overrides on any conversation switch
     setRagEnabled(null);
     setToolsEnabled(null);
+    // Clear messages immediately to avoid stale content flash
+    setMessages([]);
     if (id) {
       setConversationId(id);
     } else {
       setConversationId(null);
-      setMessages([]);
     }
   };
 

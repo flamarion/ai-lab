@@ -68,6 +68,7 @@ export default function SettingsPage() {
   };
 
   const handleDeleteDoc = async (id: string) => {
+    if (!confirm("Delete this document? This cannot be undone.")) return;
     await docsApi.delete(id).catch(() => {});
     setDocs((prev) => prev.filter((d) => d.id !== id));
   };
@@ -186,6 +187,7 @@ export default function SettingsPage() {
               <span className="flex-1">{m.content}</span>
               <button
                 onClick={async () => {
+                  if (!confirm("Delete this memory?")) return;
                   await memApi.delete(m.id, user!.user_id);
                   setMemories((prev) => prev.filter((x) => x.id !== m.id));
                 }}

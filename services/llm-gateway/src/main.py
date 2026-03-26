@@ -502,8 +502,11 @@ class MCPAdminRequest(BaseModel):
 
 
 @app.get("/mcp/servers")
-async def list_mcp_servers():
-    """List configured MCP servers with connection status and tools."""
+async def list_mcp_servers(admin_user_id: str = Query(...)):
+    """Admin-only: list configured MCP servers with connection status and tools."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(admin_user_id)
     return {"servers": await mcp_manager.list_servers()}
 
 
@@ -715,15 +718,19 @@ async def delete_memory(memory_id: str, user_id: str = Query(...)):
 
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """Streaming chat endpoint — sends SSE events with status updates.
-
-    Events:
-      event: status    {"status": "thinking|tool_call|tool_result|summarizing", "detail": "..."}
-      event: done      {"response": "...", "model": "...", "conversation_id": "...", "tools_used": [...]}
-      event: error     {"detail": "..."}
-    """
+    """Streaming chat endpoint — sends SSE events with status updates."""
     import json as _json
     from starlette.responses import StreamingResponse
+
+    # Look up child flag for safety guardrails
+    is_child = False
+    if request.user_id and db.is_available():
+        try:
+            user_record = await db.get_user_by_id(request.user_id)
+            if user_record:
+                is_child = user_record.get("is_child", False)
+        except Exception:
+            pass
 
     async def _generate():
         try:
@@ -761,12 +768,13 @@ async def chat_stream(request: ChatRequest):
                 except Exception:
                     pass
 
-            # System prompt
+            # System prompt (includes child safety if applicable)
             system_prompt = await context.build_system_prompt(
                 user_id=request.user_id,
                 user_system_prompt=request.system_prompt,
                 rag_context=rag_context,
                 use_tools=request.use_tools,
+                is_child=is_child,
             )
             if system_prompt:
                 messages.insert(0, {"role": "system", "content": system_prompt})
@@ -798,7 +806,7 @@ async def chat_stream(request: ChatRequest):
                 async def _run_chat():
                     return await client.chat_with_tools(
                         model=model, messages=messages, options=options,
-                        on_status=_on_status,
+                        on_status=_on_status, user_id=request.user_id,
                     )
 
                 chat_task = asyncio.create_task(_run_chat())
@@ -902,12 +910,23 @@ async def chat(request: ChatRequest):
         except Exception as e:
             logger.warning("RAG search failed, proceeding without context: %s", e)
 
-    # Build system prompt: agent instructions + memory + custom prompt + RAG
+    # Check child flag for safety guardrails
+    is_child = False
+    if request.user_id and db.is_available():
+        try:
+            user_record = await db.get_user_by_id(request.user_id)
+            if user_record:
+                is_child = user_record.get("is_child", False)
+        except Exception:
+            pass
+
+    # Build system prompt: safety + agent + memory + custom prompt + RAG
     system_prompt = await context.build_system_prompt(
         user_id=request.user_id,
         user_system_prompt=request.system_prompt,
         rag_context=rag_context,
         use_tools=request.use_tools,
+        is_child=is_child,
     )
     if system_prompt:
         messages.insert(0, {"role": "system", "content": system_prompt})
@@ -930,12 +949,11 @@ async def chat(request: ChatRequest):
     tools_used = []
     try:
         if request.use_tools:
-            # Set user context for save_memory tool
-            tools._current_user_id = request.user_id
             response_text, tools_used = await client.chat_with_tools(
                 model=model,
                 messages=messages,
                 options=options,
+                user_id=request.user_id,
             )
             if tools_used:
                 logger.info("Tools used: %s", [t["name"] for t in tools_used])

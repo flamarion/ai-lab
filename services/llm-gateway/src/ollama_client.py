@@ -52,6 +52,7 @@ class OllamaClient:
         options: dict | None = None,
         max_tool_rounds: int = 5,
         on_status=None,
+        user_id: str | None = None,
     ) -> tuple[str, list[dict]]:
         """Chat with tool use support.
 
@@ -114,7 +115,7 @@ class OllamaClient:
                     # Run local tools in threadpool (they may do sync I/O)
                     loop = asyncio.get_running_loop()
                     result = await loop.run_in_executor(
-                        None, partial(tools.execute_tool, fn_name, fn_args)
+                        None, partial(tools.execute_tool, fn_name, fn_args, user_id)
                     )
 
                 await _status("tool_result", f"{fn_name} completed")
