@@ -23,6 +23,7 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [statusText, setStatusText] = useState("");
+  const [streamingContent, setStreamingContent] = useState("");
   const [sidebarRefresh, setSidebarRefresh] = useState(0);
   // Per-chat overrides (default from user preferences, togglable in input bar)
   const [ragEnabled, setRagEnabled] = useState<boolean | null>(null); // null = use pref default
@@ -51,7 +52,7 @@ export default function ChatPage() {
   // Auto-scroll to bottom
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, sending]);
+  }, [messages, sending, streamingContent]);
 
   // Auto-resize textarea
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -89,11 +90,18 @@ export default function ChatPage() {
         history: conversationId ? undefined : messages.map((m) => ({ role: m.role, content: m.content })),
       };
 
-      // Use streaming endpoint for real-time status updates
-      const result = await chatApi.sendStream(params, (event) => {
-        setStatusText(event.detail || event.status);
-      });
+      setStreamingContent("");
 
+      const result = await chatApi.sendStream(
+        params,
+        (event) => setStatusText(event.detail || event.status),
+        (token) => {
+          setStatusText("");
+          setStreamingContent((prev) => prev + token);
+        },
+      );
+
+      setStreamingContent("");
       setStatusText("");
       setConversationId(result.conversation_id);
       setSidebarRefresh((n) => n + 1);
@@ -107,6 +115,7 @@ export default function ChatPage() {
       ]);
     } catch (err) {
       setStatusText("");
+      setStreamingContent("");
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: `Error: ${err instanceof Error ? err.message : "Something went wrong"}` },
@@ -203,14 +212,14 @@ export default function ChatPage() {
             <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
               {messages.map((m, i) => (
                 <ChatMessageComponent
-                  key={`${i}-${m.role}-${m.content.slice(0, 32)}`}
+                  key={`${conversationId}-${i}-${m.role}`}
                   role={m.role}
                   content={m.content}
                   toolsUsed={m.toolsUsed}
                 />
               ))}
               {sending && (
-                <ChatMessageComponent role="assistant" content="" isStreaming statusText={statusText} />
+                <ChatMessageComponent role="assistant" content={streamingContent} isStreaming statusText={statusText} />
               )}
             </div>
           )}

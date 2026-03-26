@@ -1,5 +1,7 @@
 import asyncio
+import json
 import logging
+from collections.abc import AsyncIterator
 from functools import partial
 
 import httpx
@@ -43,6 +45,38 @@ class OllamaClient:
         response.raise_for_status()
         data = response.json()
         return data["message"]["content"]
+
+    @_trace
+    async def _trace_streaming_chat(
+        self, model: str, messages: list[dict], options: dict | None, response: str
+    ) -> str:
+        """Record a streaming chat for Weave tracing. Called after all tokens are collected."""
+        return response
+
+    async def chat_stream(
+        self, model: str, messages: list[dict], options: dict | None = None
+    ) -> AsyncIterator[str]:
+        """Stream chat tokens from Ollama. Yields each text chunk as it arrives."""
+        async with self.http.stream(
+            "POST",
+            "/api/chat",
+            json={
+                "model": model,
+                "messages": messages,
+                "stream": True,
+                "options": options or {},
+            },
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line.strip():
+                    continue
+                chunk = json.loads(line)
+                token = chunk.get("message", {}).get("content", "")
+                if token:
+                    yield token
+                if chunk.get("done"):
+                    break
 
     @_trace
     async def chat_with_tools(
@@ -145,6 +179,86 @@ class OllamaClient:
         )
         response.raise_for_status()
         return response.json()["message"]["content"], tools_used
+
+    async def chat_with_tools_stream(
+        self,
+        model: str,
+        messages: list[dict],
+        options: dict | None = None,
+        max_tool_rounds: int = 5,
+        user_id: str | None = None,
+    ) -> AsyncIterator[dict]:
+        """Streaming tool use. Yields dicts:
+        {"type": "status", "status": str, "detail": str}
+        {"type": "token", "text": str}
+        {"type": "done", "tools_used": list}
+        Tool rounds are non-streaming; the final answer streams tokens.
+        """
+        tool_schemas = tools.get_tool_schemas() + mcp_manager.get_tool_schemas()
+        tools_used = []
+
+        for round_num in range(max_tool_rounds):
+            yield {"type": "status", "status": "thinking",
+                   "detail": f"Round {round_num + 1}" if round_num > 0 else "Thinking..."}
+
+            response = await self.http.post(
+                "/api/chat",
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "stream": False,
+                    "options": options or {},
+                    "tools": tool_schemas,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+            msg = data["message"]
+
+            tool_calls = msg.get("tool_calls")
+            if not tool_calls:
+                # Model produced a final text response — yield it directly.
+                # We reuse the already-generated content rather than re-querying,
+                # which avoids double latency and non-deterministic second answers.
+                content = msg.get("content", "")
+                if content:
+                    yield {"type": "token", "text": content}
+                yield {"type": "done", "tools_used": tools_used}
+                return
+
+            logger.info("Tool round %d: %d call(s)", round_num + 1, len(tool_calls))
+            messages.append(msg)
+
+            for tc in tool_calls:
+                fn_name = tc["function"]["name"]
+                fn_args = tc["function"]["arguments"]
+
+                yield {"type": "status", "status": "tool_call", "detail": f"Using {fn_name}..."}
+
+                if mcp_manager.has_tool(fn_name):
+                    result = await mcp_manager.call_tool(fn_name, fn_args)
+                else:
+                    loop = asyncio.get_running_loop()
+                    result = await loop.run_in_executor(
+                        None, partial(tools.execute_tool, fn_name, fn_args, user_id)
+                    )
+
+                yield {"type": "status", "status": "tool_result", "detail": f"{fn_name} completed"}
+
+                tools_used.append({
+                    "name": fn_name,
+                    "arguments": fn_args,
+                    "result": result,
+                })
+                messages.append({"role": "tool", "content": result})
+
+        # Exhausted max rounds — stream final response without tools
+        logger.warning("Hit max tool rounds (%d), requesting final response", max_tool_rounds)
+        full_text = ""
+        async for token in self.chat_stream(model, messages, options):
+            yield {"type": "token", "text": token}
+            full_text += token
+        yield {"type": "done", "tools_used": tools_used}
 
     async def generate_title(self, user_message: str, assistant_response: str, model: str) -> str:
         """Ask the LLM to produce a short conversation title."""
