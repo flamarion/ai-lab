@@ -1,0 +1,32 @@
+use_default_settings: true
+
+server:
+  secret_key: "change-me-on-deploy"
+  limiter: false
+  image_proxy: true
+  method: "GET"
+
+search:
+  safe_search: 0
+  formats:
+    - html
+    - json
+
+general:
+  debug: false
+  instance_name: "AI Lab Search"
+
+engines:
+  - name: google
+    disabled: false
+    weight: 2
+  - name: duckduckgo
+    disabled: false
+    weight: 2
+  - name: brave
+    disabled: false
+    weight: 1
+  - name: wikipedia
+    disabled: false
+  - name: bing
+    disabled: true

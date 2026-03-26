@@ -102,7 +102,10 @@ Supported parameter types: string, integer, number, boolean, array, object.
 import ast
 import logging
 import math
+import os
 from datetime import datetime, timezone
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +231,40 @@ def save_memory(fact: str) -> str:
         return f"Remembered: {fact.strip()}"
     except Exception as e:
         return f"Error saving memory: {e}"
+
+
+_SEARXNG_URL = os.getenv("SEARXNG_URL", "http://searxng:8080")
+
+
+def web_search(query: str, num_results: int = 5) -> str:
+    """Search the web using SearXNG and return top results.
+
+    Returns a formatted list of results with title, URL, and snippet.
+    """
+    try:
+        with httpx.Client(timeout=10) as client:
+            resp = client.get(
+                f"{_SEARXNG_URL}/search",
+                params={"q": query, "format": "json", "categories": "general"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        results = data.get("results", [])[:num_results]
+        if not results:
+            return f"No results found for: {query}"
+
+        lines = []
+        for i, r in enumerate(results, 1):
+            title = r.get("title", "No title")
+            url = r.get("url", "")
+            snippet = r.get("content", "")
+            lines.append(f"{i}. {title}\n   {url}\n   {snippet}")
+        return "\n\n".join(lines)
+    except httpx.ConnectError:
+        return "Error: search service unavailable (SearXNG not running)"
+    except Exception as e:
+        return f"Error searching: {e}"
 
 
 # Conversion factors: from_unit → {to_unit: factor}
@@ -371,6 +408,35 @@ TOOL_REGISTRY: dict[str, dict] = {
                         },
                     },
                     "required": ["value", "from_unit", "to_unit"],
+                },
+            },
+        },
+    },
+    "web_search": {
+        "fn": web_search,
+        "schema": {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": (
+                    "Search the web for current information. Use this when the user asks about "
+                    "recent events, news, weather, prices, people, places, or anything that "
+                    "requires up-to-date information beyond your training data. Also use this "
+                    "when you're not sure about a fact and want to verify it."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The search query (e.g. 'weather in Amsterdam today')",
+                        },
+                        "num_results": {
+                            "type": "integer",
+                            "description": "Number of results to return (default 5, max 10)",
+                        },
+                    },
+                    "required": ["query"],
                 },
             },
         },

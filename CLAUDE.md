@@ -17,7 +17,7 @@ Personal AI engineering lab for learning end-to-end AI system design. The goal i
 ## Infrastructure
 
 - **GPU PC** (192.168.1.178, hostname: mato): Ollama on port 11434 — serves mistral:7b, qwen3.5:27b, llama3.1:8b, gemma3:12b. 2x RTX 3060 12GB (24GB total).
-- **ai-app VM** (192.168.1.201, Proxmox): Runs app services via Docker — gateway, chat UI, W&B Weave
+- **ai-app VM** (192.168.1.201, Proxmox): Runs app services via Docker — gateway, chat UI, SearXNG, W&B Weave
 - **ai-data VM** (192.168.1.202, Proxmox): Data services — Postgres (conversation persistence), Qdrant (vector search for RAG)
 - **Ceph cluster**: 4TB — RBD block storage + S3 via RadosGW
 
@@ -111,12 +111,12 @@ Services are accessible from any LAN device at `http://<ai-app-vm-ip>` (Web UI, 
 
 ```
 User → nginx (:80) → Next.js (web-ui:3000) → FastAPI (llm-gateway:8000) → Ollama (GPU PC:11434)
-                                       ↓              ↓              ↑
-                                  W&B Weave      Postgres        /api/embed
-                                  (tracing)      (ai-data)       (embeddings)
-                                                    ↓
-                                                 Qdrant
-                                                (ai-data:6333)
+              │                                 ↓    ↓         ↓     ↑
+              └─ /search → SearXNG (:8080)  Weave  Postgres  SearXNG /api/embed
+                                           (trace) (ai-data) (search) (embeddings)
+                                                      ↓
+                                                   Qdrant
+                                                  (ai-data:6333)
 ```
 
 ### Gateway API Endpoints
@@ -191,12 +191,12 @@ Current migrations:
 - `009_user_memory.sql` — user_memory table (per-user persistent memory for cross-conversation context)
 
 Two compose files, one per VM:
-- `infra/docker/docker-compose.yml` — ai-app VM (nginx + gateway + chat UI)
+- `infra/docker/docker-compose.yml` — ai-app VM (nginx + gateway + chat UI + SearXNG)
 - `infra/docker/docker-compose.data.yml` — ai-data VM (Postgres + Qdrant)
 
 ### Reverse Proxy
 
-nginx sits in front of the Next.js web UI and the gateway on port 80. Family accesses `http://<ai-app-vm-ip>` — no port needed. Config at `infra/docker/nginx/default.conf`. The gateway API is available at `/api/` (prefix stripped).
+nginx sits in front of the Next.js web UI and the gateway on port 80. Family accesses `http://<ai-app-vm-ip>` — no port needed. Config at `infra/docker/nginx/default.conf`. The gateway API is available at `/api/` (prefix stripped). SearXNG web search UI is at `/search`.
 
 ### RAG Pipeline
 
@@ -280,7 +280,7 @@ See the docstring in `services/llm-gateway/src/tools.py` for a full guide. Quick
 2. Add it to `TOOL_REGISTRY` with an Ollama-compatible schema
 3. The gateway auto-discovers it on restart
 
-Built-in tools: `calculator`, `current_time`, `unit_convert`, `save_memory`.
+Built-in tools: `calculator`, `current_time`, `unit_convert`, `save_memory`, `web_search`.
 
 ### RAG & Tools Configuration
 
