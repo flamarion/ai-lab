@@ -11,10 +11,24 @@ logger = logging.getLogger(__name__)
 _pool: asyncpg.Pool | None = None
 
 
+async def _init_connection(conn: asyncpg.Connection) -> None:
+    """Configure each connection in the pool.
+
+    asyncpg returns json/jsonb columns as raw strings by default.
+    Register codecs so they round-trip as Python dicts/lists automatically.
+    """
+    await conn.set_type_codec(
+        "jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog"
+    )
+    await conn.set_type_codec(
+        "json", encoder=json.dumps, decoder=json.loads, schema="pg_catalog"
+    )
+
+
 async def init_pool(dsn: str) -> None:
     """Create the connection pool. Call once at startup."""
     global _pool
-    _pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10)
+    _pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10, init=_init_connection)
     logger.info("Database pool created")
 
 
@@ -289,8 +303,8 @@ async def update_user_preferences(user_id: str, preferences: dict) -> bool:
     """Update a user's preferences JSON. Returns True if user exists."""
     pool = _pool_or_raise()
     result = await pool.execute(
-        "UPDATE users SET preferences = $1::jsonb WHERE id = $2",
-        json.dumps(preferences),
+        "UPDATE users SET preferences = $1 WHERE id = $2",
+        preferences,
         uuid.UUID(user_id),
     )
     return result == "UPDATE 1"
@@ -407,9 +421,9 @@ async def save_mcp_config(config: dict) -> None:
     """Persist the full MCP server config to the DB."""
     pool = _pool_or_raise()
     await pool.execute(
-        "INSERT INTO mcp_config (id, config, updated_at) VALUES (1, $1::jsonb, now()) "
-        "ON CONFLICT (id) DO UPDATE SET config = $1::jsonb, updated_at = now()",
-        json.dumps(config),
+        "INSERT INTO mcp_config (id, config, updated_at) VALUES (1, $1, now()) "
+        "ON CONFLICT (id) DO UPDATE SET config = $1, updated_at = now()",
+        config,
     )
 
 
