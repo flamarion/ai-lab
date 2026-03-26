@@ -212,7 +212,7 @@ export default function ChatPage() {
             <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
               {messages.map((m, i) => (
                 <ChatMessageComponent
-                  key={`${i}-${m.role}`}
+                  key={`${conversationId}-${i}-${m.role}`}
                   role={m.role}
                   content={m.content}
                   toolsUsed={m.toolsUsed}

@@ -210,14 +210,12 @@ class OllamaClient:
 
             tool_calls = msg.get("tool_calls")
             if not tool_calls:
-                # No more tool calls — re-send WITHOUT tools to get a streaming final answer
-                # (Ollama can't stream when tools schema is present in some cases)
+                # No tool calls — re-send the same messages WITHOUT the tools
+                # schema so Ollama streams the response token-by-token.
+                # (The non-streaming response we just got is discarded.)
                 yield {"type": "status", "status": "thinking", "detail": "Generating response..."}
-                # Stream the final answer
-                full_text = msg.get("content", "")
-                if full_text:
-                    # Model already gave a text response, just yield it
-                    yield {"type": "token", "text": full_text}
+                async for token in self.chat_stream(model, messages, options):
+                    yield {"type": "token", "text": token}
                 yield {"type": "done", "tools_used": tools_used}
                 return
 
