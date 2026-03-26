@@ -267,6 +267,7 @@ async def login(request: LoginRequest):
         "user_id": user["id"],
         "username": user["username"],
         "is_admin": user["is_admin"],
+        "is_child": user.get("is_child", False),
         "preferences": user["preferences"],
     }
 
@@ -292,6 +293,7 @@ async def get_session(user_id: str = Query(...)):
             "user_id": user["id"],
             "username": user["username"],
             "is_admin": user["is_admin"],
+            "is_child": user.get("is_child", False),
             "preferences": user["preferences"],
         },
         headers={"Cache-Control": "no-store"},
@@ -716,21 +718,63 @@ async def delete_memory(memory_id: str, user_id: str = Query(...)):
     return {"status": "deleted"}
 
 
+# --- Shared helpers for /chat and /chat/stream ---
+
+async def _get_is_child(user_id: str | None) -> bool:
+    """Look up the is_child flag for safety guardrails."""
+    if not user_id or not db.is_available():
+        return False
+    try:
+        user_record = await db.get_user_by_id(user_id)
+        return bool(user_record and user_record.get("is_child", False))
+    except Exception:
+        return False
+
+
+async def _retrieve_rag_context(message: str) -> str | None:
+    """Embed the query and search Qdrant for relevant chunks."""
+    if not vector_store.is_available():
+        return None
+    query_text = f"search_query: {message}"
+    query_vectors = await client.embed([query_text])
+    results = vector_store.search(query_vectors[0], limit=5)
+    if results:
+        parts = [f"[{r.get('source', 'unknown')}]\n{r['text']}" for r in results]
+        return _RAG_SYSTEM_PROMPT.format(context="\n---\n".join(parts))
+    return None
+
+
+def _build_options(request: ChatRequest) -> dict:
+    """Build the Ollama options dict from the request."""
+    options: dict = {"temperature": request.temperature}
+    if request.top_p is not None:
+        options["top_p"] = request.top_p
+    if request.num_predict is not None:
+        options["num_predict"] = request.num_predict
+    return options
+
+
+def _maybe_extract_memories(
+    request: ChatRequest, messages: list[dict], response_text: str, model: str
+) -> None:
+    """Fire-and-forget memory extraction every 6 turns."""
+    if not request.user_id or not db.is_available():
+        return
+    turn_count = sum(1 for m in messages if m.get("role") in ("user", "assistant"))
+    if turn_count >= 6 and turn_count % 6 == 0:
+        extraction_messages = messages + [{"role": "assistant", "content": response_text}]
+        asyncio.create_task(
+            context.extract_memories(extraction_messages, client, model, request.user_id)
+        )
+
+
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
     """Streaming chat endpoint — sends SSE events with status updates."""
     import json as _json
     from starlette.responses import StreamingResponse
 
-    # Look up child flag for safety guardrails
-    is_child = False
-    if request.user_id and db.is_available():
-        try:
-            user_record = await db.get_user_by_id(request.user_id)
-            if user_record:
-                is_child = user_record.get("is_child", False)
-        except Exception:
-            pass
+    is_child = await _get_is_child(request.user_id)
 
     async def _generate():
         try:
@@ -756,15 +800,10 @@ async def chat_stream(request: ChatRequest):
             yield f"event: status\ndata: {_json.dumps({'status': 'preparing', 'detail': 'Building context...'})}\n\n"
 
             rag_context = None
-            if request.use_rag and vector_store.is_available():
+            if request.use_rag:
                 try:
                     yield f"event: status\ndata: {_json.dumps({'status': 'rag', 'detail': 'Searching documents...'})}\n\n"
-                    query_text = f"search_query: {request.message}"
-                    query_vectors = await client.embed([query_text])
-                    results = vector_store.search(query_vectors[0], limit=5)
-                    if results:
-                        parts = [f"[{r.get('source', 'unknown')}]\n{r['text']}" for r in results]
-                        rag_context = _RAG_SYSTEM_PROMPT.format(context="\n---\n".join(parts))
+                    rag_context = await _retrieve_rag_context(request.message)
                 except Exception:
                     pass
 
@@ -785,11 +824,7 @@ async def chat_stream(request: ChatRequest):
                 yield f"event: status\ndata: {_json.dumps({'status': 'summarizing', 'detail': 'Compressing conversation history...'})}\n\n"
                 messages = await context.summarize_conversation(messages, client, model)
 
-            options: dict = {"temperature": request.temperature}
-            if request.top_p is not None:
-                options["top_p"] = request.top_p
-            if request.num_predict is not None:
-                options["num_predict"] = request.num_predict
+            options = _build_options(request)
 
             yield f"event: status\ndata: {_json.dumps({'status': 'thinking', 'detail': f'Asking {model}...'})}\n\n"
 
@@ -797,7 +832,6 @@ async def chat_stream(request: ChatRequest):
             # status events via a queue (can't yield from inside await)
             tools_used = []
             if request.use_tools:
-                tools._current_user_id = request.user_id
                 status_queue: asyncio.Queue = asyncio.Queue()
 
                 async def _on_status(status: str, detail: str):
@@ -848,14 +882,7 @@ async def chat_stream(request: ChatRequest):
                     _generate_title(conversation_id, request.message, response_text, model)
                 )
 
-            # Memory extraction
-            if request.user_id and db.is_available():
-                turn_count = sum(1 for m in messages if m.get("role") in ("user", "assistant"))
-                if turn_count >= 6 and turn_count % 6 == 0:
-                    extraction_messages = messages + [{"role": "assistant", "content": response_text}]
-                    asyncio.create_task(
-                        context.extract_memories(extraction_messages, client, model, request.user_id)
-                    )
+            _maybe_extract_memories(request, messages, response_text, model)
 
             # Send final result
             yield f"event: done\ndata: {_json.dumps({'response': response_text, 'model': model, 'conversation_id': conversation_id, 'tools_used': tools_used})}\n\n"
@@ -898,27 +925,15 @@ async def chat(request: ChatRequest):
 
     # RAG: retrieve relevant context (before building system prompt)
     rag_context = None
-    if request.use_rag and vector_store.is_available():
+    if request.use_rag:
         try:
-            query_text = f"search_query: {request.message}"
-            query_vectors = await client.embed([query_text])
-            results = vector_store.search(query_vectors[0], limit=5)
-            if results:
-                parts = [f"[{r.get('source', 'unknown')}]\n{r['text']}" for r in results]
-                rag_context = _RAG_SYSTEM_PROMPT.format(context="\n---\n".join(parts))
-                logger.info("RAG: injected %d chunks into prompt", len(results))
+            rag_context = await _retrieve_rag_context(request.message)
+            if rag_context:
+                logger.info("RAG: injected context into prompt")
         except Exception as e:
             logger.warning("RAG search failed, proceeding without context: %s", e)
 
-    # Check child flag for safety guardrails
-    is_child = False
-    if request.user_id and db.is_available():
-        try:
-            user_record = await db.get_user_by_id(request.user_id)
-            if user_record:
-                is_child = user_record.get("is_child", False)
-        except Exception:
-            pass
+    is_child = await _get_is_child(request.user_id)
 
     # Build system prompt: safety + agent + memory + custom prompt + RAG
     system_prompt = await context.build_system_prompt(
@@ -938,12 +953,7 @@ async def chat(request: ChatRequest):
         logger.info("Conversation approaching context limit — summarizing")
         messages = await context.summarize_conversation(messages, client, model)
 
-    # Build Ollama options (only include non-default values)
-    options: dict = {"temperature": request.temperature}
-    if request.top_p is not None:
-        options["top_p"] = request.top_p
-    if request.num_predict is not None:
-        options["num_predict"] = request.num_predict
+    options = _build_options(request)
 
     # Call Ollama — with or without tool use
     tools_used = []
@@ -983,15 +993,7 @@ async def chat(request: ChatRequest):
             _generate_title(conversation_id, request.message, response_text, model)
         )
 
-    # Extract memories periodically (every 6 user/assistant turns)
-    if request.user_id and db.is_available():
-        turn_count = sum(1 for m in messages if m.get("role") in ("user", "assistant"))
-        # Include the just-generated response for extraction
-        extraction_messages = messages + [{"role": "assistant", "content": response_text}]
-        if turn_count >= 6 and turn_count % 6 == 0:
-            asyncio.create_task(
-                context.extract_memories(extraction_messages, client, model, request.user_id)
-            )
+    _maybe_extract_memories(request, messages, response_text, model)
 
     return ChatResponse(
         response=response_text,

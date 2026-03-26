@@ -118,16 +118,10 @@ export default function ChatPage() {
   };
 
   const handleNewChat = (id: string | null) => {
-    // Reset per-chat overrides on any conversation switch
     setRagEnabled(null);
     setToolsEnabled(null);
-    // Clear messages immediately to avoid stale content flash
     setMessages([]);
-    if (id) {
-      setConversationId(id);
-    } else {
-      setConversationId(null);
-    }
+    setConversationId(id);
   };
 
   const effectiveRag = ragEnabled ?? (prefs.use_rag as boolean) ?? false;

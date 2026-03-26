@@ -69,12 +69,12 @@ function SettingsForm({ user }: { user: AuthResponse }) {
     for (const file of Array.from(files)) {
       try {
         await docsApi.ingest(file);
-        const updated = await docsApi.list();
-        setDocs(updated.documents);
       } catch {
         alert(`Failed to upload ${file.name}`);
       }
     }
+    // Refresh list once after all uploads complete
+    docsApi.list().then((d) => setDocs(d.documents)).catch(() => {});
   };
 
   const handleDeleteDoc = async (id: string) => {

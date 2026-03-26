@@ -252,7 +252,7 @@ async def get_user_by_username(username: str) -> dict | None:
     """Return user by username or None."""
     pool = _pool_or_raise()
     row = await pool.fetchrow(
-        "SELECT id, username, pin_hash, is_admin, preferences, created_at FROM users WHERE username = $1",
+        "SELECT id, username, pin_hash, is_admin, is_child, preferences, created_at FROM users WHERE username = $1",
         username,
     )
     if row is None:
@@ -262,6 +262,7 @@ async def get_user_by_username(username: str) -> dict | None:
         "username": row["username"],
         "pin_hash": row["pin_hash"],
         "is_admin": row["is_admin"],
+        "is_child": row["is_child"],
         "preferences": row["preferences"],
     }
 
@@ -270,7 +271,7 @@ async def get_user_by_id(user_id: str) -> dict | None:
     """Return user by ID or None (includes pin_hash for verification)."""
     pool = _pool_or_raise()
     row = await pool.fetchrow(
-        "SELECT id, username, pin_hash, is_admin, preferences FROM users WHERE id = $1",
+        "SELECT id, username, pin_hash, is_admin, is_child, preferences FROM users WHERE id = $1",
         uuid.UUID(user_id),
     )
     if row is None:
@@ -280,6 +281,7 @@ async def get_user_by_id(user_id: str) -> dict | None:
         "username": row["username"],
         "pin_hash": row["pin_hash"],
         "is_admin": row["is_admin"],
+        "is_child": row["is_child"],
         "preferences": row["preferences"],
     }
 
@@ -412,8 +414,7 @@ async def get_mcp_config() -> dict:
     pool = _pool_or_raise()
     row = await pool.fetchrow("SELECT config FROM mcp_config WHERE id = 1")
     if row and row["config"]:
-        cfg = row["config"]
-        return cfg if isinstance(cfg, dict) else json.loads(cfg)
+        return row["config"]
     return {}
 
 
