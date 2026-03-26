@@ -854,6 +854,9 @@ async def chat_stream(request: ChatRequest):
                     response_text += token
                     yield f"event: token\ndata: {_json.dumps({'text': token})}\n\n"
 
+            # Record trace for Weave (streaming methods aren't directly traced)
+            await client._trace_streaming_chat(model, messages, options, response_text)
+
             # Persist
             is_new_conversation = not request.conversation_id
             if db.is_available():

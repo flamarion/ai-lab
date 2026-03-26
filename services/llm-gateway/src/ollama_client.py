@@ -46,6 +46,13 @@ class OllamaClient:
         data = response.json()
         return data["message"]["content"]
 
+    @_trace
+    async def _trace_streaming_chat(
+        self, model: str, messages: list[dict], options: dict | None, response: str
+    ) -> str:
+        """Record a streaming chat for Weave tracing. Called after all tokens are collected."""
+        return response
+
     async def chat_stream(
         self, model: str, messages: list[dict], options: dict | None = None
     ) -> AsyncIterator[str]:
@@ -210,12 +217,12 @@ class OllamaClient:
 
             tool_calls = msg.get("tool_calls")
             if not tool_calls:
-                # No tool calls — re-send the same messages WITHOUT the tools
-                # schema so Ollama streams the response token-by-token.
-                # (The non-streaming response we just got is discarded.)
-                yield {"type": "status", "status": "thinking", "detail": "Generating response..."}
-                async for token in self.chat_stream(model, messages, options):
-                    yield {"type": "token", "text": token}
+                # Model produced a final text response — yield it directly.
+                # We reuse the already-generated content rather than re-querying,
+                # which avoids double latency and non-deterministic second answers.
+                content = msg.get("content", "")
+                if content:
+                    yield {"type": "token", "text": content}
                 yield {"type": "done", "tools_used": tools_used}
                 return
 
