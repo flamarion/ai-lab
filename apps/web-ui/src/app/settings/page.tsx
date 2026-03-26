@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth } from "@/lib/auth-context";
-import { type AuthResponse } from "@/lib/api";
+import { type AuthResponse, DEFAULT_PREFS } from "@/lib/api";
 import { chat as chatApi, documents as docsApi, auth as authApi, memory as memApi, type Memory } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -33,14 +33,14 @@ function SettingsForm({ user }: { user: AuthResponse }) {
   // to be loaded because this component only mounts after auth completes.
   const prefs = (user.preferences || {}) as Record<string, unknown>;
   const [model, setModel] = useState((prefs.model as string) || "Auto (recommended)");
-  const [temperature, setTemperature] = useState((prefs.temperature as number) ?? 0.7);
-  const [topP, setTopP] = useState((prefs.top_p as number) ?? 0.9);
-  const [topK, setTopK] = useState((prefs.top_k as number) ?? 40);
-  const [numPredict, setNumPredict] = useState((prefs.num_predict as number) ?? 1024);
-  const [repeatPenalty, setRepeatPenalty] = useState((prefs.repeat_penalty as number) ?? 1.1);
+  const [temperature, setTemperature] = useState((prefs.temperature as number) ?? DEFAULT_PREFS.temperature);
+  const [topP, setTopP] = useState((prefs.top_p as number) ?? DEFAULT_PREFS.top_p);
+  const [topK, setTopK] = useState((prefs.top_k as number) ?? DEFAULT_PREFS.top_k);
+  const [numPredict, setNumPredict] = useState((prefs.num_predict as number) ?? DEFAULT_PREFS.num_predict);
+  const [repeatPenalty, setRepeatPenalty] = useState((prefs.repeat_penalty as number) ?? DEFAULT_PREFS.repeat_penalty);
   const [systemPrompt, setSystemPrompt] = useState((prefs.system_prompt as string) || "");
-  const [useRag, setUseRag] = useState((prefs.use_rag as boolean) ?? false);
-  const [useTools, setUseTools] = useState((prefs.use_tools as boolean) ?? false);
+  const [useRag, setUseRag] = useState((prefs.use_rag as boolean) ?? DEFAULT_PREFS.use_rag);
+  const [useTools, setUseTools] = useState((prefs.use_tools as boolean) ?? DEFAULT_PREFS.use_tools);
   const [memories, setMemories] = useState<Memory[]>([]);
   const [newMemory, setNewMemory] = useState("");
 

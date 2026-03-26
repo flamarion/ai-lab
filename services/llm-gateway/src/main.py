@@ -724,6 +724,51 @@ async def delete_memory(memory_id: str, user_id: str = Query(...)):
 
 # --- Shared helpers for /chat and /chat/stream ---
 
+def _select_model(request: ChatRequest) -> str:
+    """Select model: explicit choice from user, or smart routing with tool override."""
+    if request.model:
+        logger.info("Model: %s (user selected)", request.model)
+        return request.model
+    model, reason = router.select_model(request.message)
+    if (request.use_tools and settings.ROUTE_TOOLS_MODEL
+            and model != settings.ROUTE_TOOLS_MODEL):
+        logger.info("Model: %s → %s (auto — tools override)", model, settings.ROUTE_TOOLS_MODEL)
+        return settings.ROUTE_TOOLS_MODEL
+    logger.info("Model: %s (auto — %s)", model, reason)
+    return model
+
+
+async def _load_messages(request: ChatRequest, conversation_id: str) -> list[dict]:
+    """Load conversation history from DB or use the request's inline history."""
+    if request.conversation_id and db.is_available():
+        stored = await db.get_messages(conversation_id)
+        return [{"role": m["role"], "content": m["content"]} for m in stored]
+    return list(request.history)
+
+
+async def _persist_turn(
+    request: ChatRequest, conversation_id: str, model: str,
+    response_text: str, is_new: bool,
+) -> None:
+    """Save the conversation turn to DB and kick off background tasks."""
+    if not db.is_available():
+        return
+    try:
+        title = request.message[:80] if is_new else ""
+        await db.upsert_conversation(conversation_id, model, title, request.user_id)
+        await db.add_message(conversation_id, "user", request.message)
+        await db.add_message(conversation_id, "assistant", response_text)
+    except Exception as e:
+        logger.warning("Failed to persist conversation: %s", e)
+
+    if is_new:
+        asyncio.create_task(
+            _generate_title(conversation_id, request.message, response_text, model)
+        )
+
+    _maybe_extract_memories(request, [], response_text, model)
+
+
 async def _get_is_child(user_id: str | None) -> bool:
     """Look up the is_child flag for safety guardrails."""
     if not user_id or not db.is_available():
@@ -785,23 +830,9 @@ async def chat_stream(request: ChatRequest):
 
     async def _generate():
         try:
-            # --- Same logic as /chat, but with status events ---
-            if request.model:
-                model = request.model
-            else:
-                model, reason = router.select_model(request.message)
-                if (request.use_tools and settings.ROUTE_TOOLS_MODEL
-                        and model != settings.ROUTE_TOOLS_MODEL):
-                    model = settings.ROUTE_TOOLS_MODEL
-
+            model = _select_model(request)
             conversation_id = request.conversation_id or str(uuid.uuid4())
-
-            # Build message history
-            if request.conversation_id and db.is_available():
-                stored = await db.get_messages(conversation_id)
-                messages = [{"role": m["role"], "content": m["content"]} for m in stored]
-            else:
-                messages = list(request.history)
+            messages = await _load_messages(request, conversation_id)
 
             # RAG
             yield f"event: status\ndata: {_json.dumps({'status': 'preparing', 'detail': 'Building context...'})}\n\n"
@@ -864,23 +895,8 @@ async def chat_stream(request: ChatRequest):
             # Record trace for Weave (streaming methods aren't directly traced)
             await client._trace_streaming_chat(model, messages, options, response_text)
 
-            # Persist
-            is_new_conversation = not request.conversation_id
-            if db.is_available():
-                try:
-                    title = request.message[:80] if is_new_conversation else ""
-                    await db.upsert_conversation(conversation_id, model, title, request.user_id)
-                    await db.add_message(conversation_id, "user", request.message)
-                    await db.add_message(conversation_id, "assistant", response_text)
-                except Exception:
-                    pass
-
-            if is_new_conversation and db.is_available():
-                asyncio.create_task(
-                    _generate_title(conversation_id, request.message, response_text, model)
-                )
-
-            _maybe_extract_memories(request, messages, response_text, model)
+            is_new = not request.conversation_id
+            await _persist_turn(request, conversation_id, model, response_text, is_new)
 
             # Send final result
             yield f"event: done\ndata: {_json.dumps({'response': response_text, 'model': model, 'conversation_id': conversation_id, 'tools_used': tools_used})}\n\n"
@@ -893,33 +909,9 @@ async def chat_stream(request: ChatRequest):
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    # Model selection: explicit choice from user, or smart routing
-    if request.model:
-        model = request.model
-        logger.info("Model: %s (user selected)", model)
-    else:
-        model, reason = router.select_model(request.message)
-        # Override to a tool-capable model when tools are enabled.
-        # Only certain models support Ollama's tools API — others silently
-        # ignore the tools parameter. If the auto-selected model isn't the
-        # tools model itself, swap it.
-        if (request.use_tools
-                and settings.ROUTE_TOOLS_MODEL
-                and model != settings.ROUTE_TOOLS_MODEL):
-            logger.info("Model: %s → %s (auto — tools enabled, overriding to tool-capable model)",
-                        model, settings.ROUTE_TOOLS_MODEL)
-            model = settings.ROUTE_TOOLS_MODEL
-        else:
-            logger.info("Model: %s (auto — %s)", model, reason)
-
+    model = _select_model(request)
     conversation_id = request.conversation_id or str(uuid.uuid4())
-
-    # Build message history
-    if request.conversation_id and db.is_available():
-        stored = await db.get_messages(conversation_id)
-        messages = [{"role": m["role"], "content": m["content"]} for m in stored]
-    else:
-        messages = list(request.history)
+    messages = await _load_messages(request, conversation_id)
 
     # RAG: retrieve relevant context (before building system prompt)
     rag_context = None
@@ -974,24 +966,8 @@ async def chat(request: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Ollama error: {e}")
 
-    # Persist to DB if available
-    is_new_conversation = not request.conversation_id
-    if db.is_available():
-        try:
-            title = request.message[:80] if is_new_conversation else ""
-            await db.upsert_conversation(conversation_id, model, title, request.user_id)
-            await db.add_message(conversation_id, "user", request.message)
-            await db.add_message(conversation_id, "assistant", response_text)
-        except Exception as e:
-            logger.warning("Failed to persist conversation: %s", e)
-
-    # Background tasks
-    if is_new_conversation and db.is_available():
-        asyncio.create_task(
-            _generate_title(conversation_id, request.message, response_text, model)
-        )
-
-    _maybe_extract_memories(request, messages, response_text, model)
+    is_new = not request.conversation_id
+    await _persist_turn(request, conversation_id, model, response_text, is_new)
 
     return ChatResponse(
         response=response_text,
