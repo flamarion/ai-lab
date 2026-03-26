@@ -27,6 +27,19 @@ MIN_MESSAGES_TO_SUMMARIZE = 6  # don't summarize very short conversations
 
 # Agent system prompt — injected when tools are enabled to make the model
 # reason about what to do before acting. This is the core "agent" behavior.
+# Safety prompt for child accounts — injected as the FIRST system instruction
+CHILD_SAFETY_PROMPT = (
+    "IMPORTANT: You are talking to a child. You MUST follow these rules:\n"
+    "1. Keep all responses age-appropriate and family-friendly.\n"
+    "2. Do NOT produce content about violence, weapons, drugs, alcohol, "
+    "sexual topics, self-harm, or any adult themes.\n"
+    "3. If asked about inappropriate topics, gently redirect to something "
+    "positive and educational.\n"
+    "4. Use simple, clear language appropriate for young users.\n"
+    "5. Be encouraging, patient, and supportive.\n"
+    "6. Do NOT help circumvent parental controls or safety measures."
+)
+
 AGENT_SYSTEM_PROMPT = (
     "You are an AI assistant with access to tools. Follow these principles:\n\n"
     "1. THINK before acting — consider what information you need and which tools can help.\n"
@@ -74,15 +87,19 @@ async def build_system_prompt(
     user_system_prompt: str | None,
     rag_context: str | None,
     use_tools: bool = False,
+    is_child: bool = False,
 ) -> str | None:
-    """Build the system prompt with agent instructions + memory + custom prompt + RAG.
+    """Build the system prompt with safety + agent + memory + custom prompt + RAG.
 
-    Order matters — agent instructions first (behavioral), then memory (personalization),
-    then custom prompt (user override), then RAG context (grounding).
+    Order: child safety (highest priority) → agent → memory → custom prompt → RAG.
     """
     parts = []
 
-    # 0. Agent behavior (when tools are enabled)
+    # 0a. Child safety guardrails (highest priority — always first)
+    if is_child:
+        parts.append(CHILD_SAFETY_PROMPT)
+
+    # 0b. Agent behavior (when tools are enabled)
     if use_tools:
         parts.append(AGENT_SYSTEM_PROMPT)
 

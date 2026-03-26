@@ -260,7 +260,7 @@ Phase 6 tool-use flow:
 
 **What you learned:**
 - Tool use protocol: model doesn't run tools — it *requests* them. The gateway orchestrates: send tools → get tool_calls → execute → feed result back → get final answer
-- Not all models support tool use: llama3.1+, qwen3.5, gemma3 do; mistral:7b (raw mode only), llama3 (none). The model itself must support the tool_calls response format
+- Not all models support tool use: llama3.1+, qwen3.5 do; mistral:7b (raw mode only), llama3 and gemma3 (none). The model itself must support the tool_calls response format
 - Tool schemas use JSON Schema (same as OpenAI function calling) — the model reads the description to decide when to call each tool
 - Multi-round tool use: the model can call tools multiple times in sequence (up to max_tool_rounds)
 - Safe eval for calculator: compile to AST, whitelist allowed names, no arbitrary code execution
@@ -317,16 +317,22 @@ Phase 6.5 hybrid tool architecture:
 - Agent system prompt: planning instructions injected when tools enabled (think → act → observe)
 - Non-blocking gateway startup: all services init in background, gateway serves immediately
 
-**What you'll learn:**
+- Per-chat RAG/tools toggles: pill buttons in chat input bar override Settings defaults per conversation
+- Streaming status: SSE events show "Thinking...", "Using tool...", "Completed" in real-time
+- OAuth MCP servers via mcp-remote: authenticate on VM host, tokens cached in ~/.mcp-auth, mounted in Docker
+- Auto-save settings: preferences persist immediately on change (no Save button)
+
+**What you learned:**
 - Autonomous AI systems and the agent loop
 - Memory: short-term (conversation) vs long-term (persisted)
 - Planning and reasoning strategies
-- When to stop: exit conditions and guardrails
+- OAuth MCP limitations in Docker (localhost-only callbacks, mcp-remote workaround)
+- SSE streaming for real-time UI feedback during multi-step operations
 
 **Remaining work:**
-- Per-chat RAG/tools toggles in the chat input area (not just in Settings)
 - Per-user document scoping (user-specific vs shared documents)
 - Agent loop refinement: multi-step planning with tool chains
+- Token streaming (show response as it generates, not all at once)
 
 ---
 

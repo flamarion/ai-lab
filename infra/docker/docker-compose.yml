@@ -21,6 +21,10 @@ services:
     environment:
       - PYTHONPATH=/app:/app/shared/python
       - DATABASE_URL=${DATABASE_URL:-postgresql://ailab:ailab_dev@192.168.1.202:5432/ailab}
+    volumes:
+      # MCP OAuth token cache — mcp-remote stores tokens here after
+      # manual auth on the host. Survives container restarts.
+      - ~/.mcp-auth:/root/.mcp-auth
     restart: unless-stopped
 
   web-ui:
@@ -32,16 +36,3 @@ services:
     depends_on:
       - llm-gateway
     restart: unless-stopped
-
-  # Legacy Streamlit UI — kept for reference, not started by default
-  # chat-ui:
-  #   build:
-  #     context: ../../apps/chat-ui
-  #     dockerfile: Dockerfile
-  #   expose:
-  #     - "8501"
-  #   environment:
-  #     - GATEWAY_URL=http://llm-gateway:8000
-  #   depends_on:
-  #     - llm-gateway
-  #   restart: unless-stopped

@@ -44,6 +44,7 @@ def _validate_uuid(value: str) -> uuid.UUID:
         raise HTTPException(status_code=400, detail=f"Invalid UUID: {value}")
 
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global client
@@ -501,8 +502,11 @@ class MCPAdminRequest(BaseModel):
 
 
 @app.get("/mcp/servers")
-async def list_mcp_servers():
-    """List configured MCP servers with connection status and tools."""
+async def list_mcp_servers(admin_user_id: str = Query(...)):
+    """Admin-only: list configured MCP servers with connection status and tools."""
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _require_admin(admin_user_id)
     return {"servers": await mcp_manager.list_servers()}
 
 
@@ -627,6 +631,7 @@ async def restart_mcp(request: MCPAdminRequest):
     return {"status": "restarted", "tools": mcp_manager.get_tool_names()}
 
 
+
 # --- Secrets Management (admin-only) ---
 
 
@@ -711,6 +716,156 @@ async def delete_memory(memory_id: str, user_id: str = Query(...)):
     return {"status": "deleted"}
 
 
+@app.post("/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """Streaming chat endpoint — sends SSE events with status updates."""
+    import json as _json
+    from starlette.responses import StreamingResponse
+
+    # Look up child flag for safety guardrails
+    is_child = False
+    if request.user_id and db.is_available():
+        try:
+            user_record = await db.get_user_by_id(request.user_id)
+            if user_record:
+                is_child = user_record.get("is_child", False)
+        except Exception:
+            pass
+
+    async def _generate():
+        try:
+            # --- Same logic as /chat, but with status events ---
+            if request.model:
+                model = request.model
+            else:
+                model, reason = router.select_model(request.message)
+                if (request.use_tools and settings.ROUTE_TOOLS_MODEL
+                        and model != settings.ROUTE_TOOLS_MODEL):
+                    model = settings.ROUTE_TOOLS_MODEL
+
+            conversation_id = request.conversation_id or str(uuid.uuid4())
+
+            # Build message history
+            if request.conversation_id and db.is_available():
+                stored = await db.get_messages(conversation_id)
+                messages = [{"role": m["role"], "content": m["content"]} for m in stored]
+            else:
+                messages = list(request.history)
+
+            # RAG
+            yield f"event: status\ndata: {_json.dumps({'status': 'preparing', 'detail': 'Building context...'})}\n\n"
+
+            rag_context = None
+            if request.use_rag and vector_store.is_available():
+                try:
+                    yield f"event: status\ndata: {_json.dumps({'status': 'rag', 'detail': 'Searching documents...'})}\n\n"
+                    query_text = f"search_query: {request.message}"
+                    query_vectors = await client.embed([query_text])
+                    results = vector_store.search(query_vectors[0], limit=5)
+                    if results:
+                        parts = [f"[{r.get('source', 'unknown')}]\n{r['text']}" for r in results]
+                        rag_context = _RAG_SYSTEM_PROMPT.format(context="\n---\n".join(parts))
+                except Exception:
+                    pass
+
+            # System prompt (includes child safety if applicable)
+            system_prompt = await context.build_system_prompt(
+                user_id=request.user_id,
+                user_system_prompt=request.system_prompt,
+                rag_context=rag_context,
+                use_tools=request.use_tools,
+                is_child=is_child,
+            )
+            if system_prompt:
+                messages.insert(0, {"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": request.message})
+
+            # Summarize if needed
+            if context.should_summarize(messages):
+                yield f"event: status\ndata: {_json.dumps({'status': 'summarizing', 'detail': 'Compressing conversation history...'})}\n\n"
+                messages = await context.summarize_conversation(messages, client, model)
+
+            options: dict = {"temperature": request.temperature}
+            if request.top_p is not None:
+                options["top_p"] = request.top_p
+            if request.num_predict is not None:
+                options["num_predict"] = request.num_predict
+
+            yield f"event: status\ndata: {_json.dumps({'status': 'thinking', 'detail': f'Asking {model}...'})}\n\n"
+
+            # For tool use: run chat in a background task and consume
+            # status events via a queue (can't yield from inside await)
+            tools_used = []
+            if request.use_tools:
+                tools._current_user_id = request.user_id
+                status_queue: asyncio.Queue = asyncio.Queue()
+
+                async def _on_status(status: str, detail: str):
+                    await status_queue.put({"status": status, "detail": detail})
+
+                async def _run_chat():
+                    return await client.chat_with_tools(
+                        model=model, messages=messages, options=options,
+                        on_status=_on_status, user_id=request.user_id,
+                    )
+
+                chat_task = asyncio.create_task(_run_chat())
+
+                # Yield status events as they come in while chat is running
+                while not chat_task.done():
+                    try:
+                        event = await asyncio.wait_for(status_queue.get(), timeout=0.5)
+                        yield f"event: status\ndata: {_json.dumps(event)}\n\n"
+                    except asyncio.TimeoutError:
+                        pass  # No event yet, check if task is done
+
+                # Drain any remaining events
+                while not status_queue.empty():
+                    event = await status_queue.get()
+                    yield f"event: status\ndata: {_json.dumps(event)}\n\n"
+
+                response_text, tools_used = chat_task.result()
+                if tools_used:
+                    logger.info("Tools used: %s", [t["name"] for t in tools_used])
+            else:
+                response_text = await client.chat(
+                    model=model, messages=messages, options=options,
+                )
+
+            # Persist
+            is_new_conversation = not request.conversation_id
+            if db.is_available():
+                try:
+                    title = request.message[:80] if is_new_conversation else ""
+                    await db.upsert_conversation(conversation_id, model, title, request.user_id)
+                    await db.add_message(conversation_id, "user", request.message)
+                    await db.add_message(conversation_id, "assistant", response_text)
+                except Exception:
+                    pass
+
+            if is_new_conversation and db.is_available():
+                asyncio.create_task(
+                    _generate_title(conversation_id, request.message, response_text, model)
+                )
+
+            # Memory extraction
+            if request.user_id and db.is_available():
+                turn_count = sum(1 for m in messages if m.get("role") in ("user", "assistant"))
+                if turn_count >= 6 and turn_count % 6 == 0:
+                    extraction_messages = messages + [{"role": "assistant", "content": response_text}]
+                    asyncio.create_task(
+                        context.extract_memories(extraction_messages, client, model, request.user_id)
+                    )
+
+            # Send final result
+            yield f"event: done\ndata: {_json.dumps({'response': response_text, 'model': model, 'conversation_id': conversation_id, 'tools_used': tools_used})}\n\n"
+
+        except Exception as e:
+            yield f"event: error\ndata: {_json.dumps({'detail': str(e)})}\n\n"
+
+    return StreamingResponse(_generate(), media_type="text/event-stream")
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     # Model selection: explicit choice from user, or smart routing
@@ -755,12 +910,23 @@ async def chat(request: ChatRequest):
         except Exception as e:
             logger.warning("RAG search failed, proceeding without context: %s", e)
 
-    # Build system prompt: agent instructions + memory + custom prompt + RAG
+    # Check child flag for safety guardrails
+    is_child = False
+    if request.user_id and db.is_available():
+        try:
+            user_record = await db.get_user_by_id(request.user_id)
+            if user_record:
+                is_child = user_record.get("is_child", False)
+        except Exception:
+            pass
+
+    # Build system prompt: safety + agent + memory + custom prompt + RAG
     system_prompt = await context.build_system_prompt(
         user_id=request.user_id,
         user_system_prompt=request.system_prompt,
         rag_context=rag_context,
         use_tools=request.use_tools,
+        is_child=is_child,
     )
     if system_prompt:
         messages.insert(0, {"role": "system", "content": system_prompt})
@@ -783,12 +949,11 @@ async def chat(request: ChatRequest):
     tools_used = []
     try:
         if request.use_tools:
-            # Set user context for save_memory tool
-            tools._current_user_id = request.user_id
             response_text, tools_used = await client.chat_with_tools(
                 model=model,
                 messages=messages,
                 options=options,
+                user_id=request.user_id,
             )
             if tools_used:
                 logger.info("Tools used: %s", [t["name"] for t in tools_used])

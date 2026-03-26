@@ -1,22 +1,37 @@
 "use client";
 
 import { useAuth } from "@/lib/auth-context";
+import { type AuthResponse } from "@/lib/api";
 import { chat as chatApi, documents as docsApi, auth as authApi, memory as memApi, type Memory } from "@/lib/api";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Upload, Trash2, FileText } from "lucide-react";
 import Link from "next/link";
 
 export default function SettingsPage() {
-  const { user, loading, updatePreferences } = useAuth();
+  const { user, loading } = useAuth();
   const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && !user) router.replace("/login");
+  }, [user, loading, router]);
+
+  if (loading || !user) return null;
+
+  // Key on user_id so the form remounts (and re-initializes state) on user switch
+  return <SettingsForm key={user.user_id} user={user} />;
+}
+
+function SettingsForm({ user }: { user: AuthResponse }) {
+  const { updatePreferences } = useAuth();
   const [models, setModels] = useState<string[]>([]);
   const [docs, setDocs] = useState<{ id: string; source: string; num_chunks: number }[]>([]);
   const [saving, setSaving] = useState(false);
   const [pinSection, setPinSection] = useState({ current: "", new_pin: "", message: "" });
 
-  // Local form state initialized from preferences
-  const prefs = (user?.preferences || {}) as Record<string, unknown>;
+  // Local form state — initialized from user.preferences which is guaranteed
+  // to be loaded because this component only mounts after auth completes.
+  const prefs = (user.preferences || {}) as Record<string, unknown>;
   const [model, setModel] = useState((prefs.model as string) || "Auto (recommended)");
   const [temperature, setTemperature] = useState((prefs.temperature as number) ?? 0.7);
   const [topP, setTopP] = useState((prefs.top_p as number) ?? 0.9);
@@ -28,23 +43,27 @@ export default function SettingsPage() {
   const [newMemory, setNewMemory] = useState("");
 
   useEffect(() => {
-    if (!loading && !user) router.replace("/login");
-  }, [user, loading, router]);
-
-  useEffect(() => {
     chatApi.models().then((d) => setModels(d.models)).catch(() => {});
     docsApi.list().then((d) => setDocs(d.documents)).catch(() => {});
-    if (user) memApi.list(user.user_id).then((d) => setMemories(d.memories)).catch(() => {});
-  }, [user]);
+    memApi.list(user.user_id).then((d) => setMemories(d.memories)).catch(() => {});
+  }, [user.user_id]);
 
-  const handleSave = async () => {
-    setSaving(true);
-    await updatePreferences({
-      model, temperature, top_p: topP, num_predict: numPredict,
-      system_prompt: systemPrompt, use_rag: useRag, use_tools: useTools,
-    });
-    setSaving(false);
-  };
+  // Auto-save on change (debounced, skips initial mount)
+  const hasInteracted = useRef(false);
+  useEffect(() => {
+    if (!hasInteracted.current) {
+      hasInteracted.current = true;
+      return; // Skip first render — don't overwrite DB with init values
+    }
+    const timeout = setTimeout(() => {
+      setSaving(true);
+      updatePreferences({
+        model, temperature, top_p: topP, num_predict: numPredict,
+        system_prompt: systemPrompt, use_rag: useRag, use_tools: useTools,
+      }).finally(() => setSaving(false));
+    }, 500);
+    return () => clearTimeout(timeout);
+  }, [model, temperature, topP, numPredict, systemPrompt, useRag, useTools]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUpload = async (files: FileList) => {
     for (const file of Array.from(files)) {
@@ -59,12 +78,13 @@ export default function SettingsPage() {
   };
 
   const handleDeleteDoc = async (id: string) => {
+    if (!confirm("Delete this document? This cannot be undone.")) return;
     await docsApi.delete(id).catch(() => {});
     setDocs((prev) => prev.filter((d) => d.id !== id));
   };
 
   const handleChangePin = async () => {
-    if (!user || pinSection.new_pin.length < 4) {
+    if (pinSection.new_pin.length < 4) {
       setPinSection((s) => ({ ...s, message: "PIN must be at least 4 digits" }));
       return;
     }
@@ -76,8 +96,6 @@ export default function SettingsPage() {
     }
   };
 
-  if (loading || !user) return null;
-
   return (
     <div className="min-h-screen">
       {/* Header */}
@@ -88,13 +106,9 @@ export default function SettingsPage() {
           </Link>
           <h1 className="text-lg font-semibold">Settings</h1>
           <div className="flex-1" />
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-4 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] text-sm font-medium hover:bg-[var(--color-accent-hover)] transition-colors disabled:opacity-50"
-          >
-            {saving ? "Saving..." : "Save"}
-          </button>
+          {saving && (
+            <span className="text-xs text-[var(--color-text-muted)]">Saving...</span>
+          )}
         </div>
       </header>
 
@@ -167,7 +181,7 @@ export default function SettingsPage() {
         <Section title="Features">
           <div className="space-y-3">
             <Toggle label="Use documents (RAG)" description="Ground answers in your uploaded documents" checked={useRag} onChange={setUseRag} />
-            <Toggle label="Use tools" description="Calculator, unit converter, web fetch, MCP tools. Requires llama3.1, qwen3.5, or gemma3." checked={useTools} onChange={setUseTools} />
+            <Toggle label="Use tools" description="Calculator, unit converter, web fetch, MCP tools. Requires llama3.1 or qwen3.5." checked={useTools} onChange={setUseTools} />
           </div>
         </Section>
 
@@ -181,7 +195,8 @@ export default function SettingsPage() {
               <span className="flex-1">{m.content}</span>
               <button
                 onClick={async () => {
-                  await memApi.delete(m.id, user!.user_id);
+                  if (!confirm("Delete this memory?")) return;
+                  await memApi.delete(m.id, user.user_id);
                   setMemories((prev) => prev.filter((x) => x.id !== m.id));
                 }}
                 className="text-[var(--color-text-muted)] hover:text-[var(--color-error)] shrink-0 mt-0.5"
@@ -196,7 +211,7 @@ export default function SettingsPage() {
               value={newMemory}
               onChange={(e) => setNewMemory(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && newMemory.trim() && user) {
+                if (e.key === "Enter" && newMemory.trim()) {
                   memApi.add(user.user_id, newMemory.trim()).then((r) => {
                     setMemories((prev) => [...prev, { id: r.id, content: newMemory.trim(), created_at: "", updated_at: "" }]);
                     setNewMemory("");
@@ -208,7 +223,7 @@ export default function SettingsPage() {
             />
             <button
               onClick={async () => {
-                if (!newMemory.trim() || !user) return;
+                if (!newMemory.trim()) return;
                 const r = await memApi.add(user.user_id, newMemory.trim());
                 setMemories((prev) => [...prev, { id: r.id, content: newMemory.trim(), created_at: "", updated_at: "" }]);
                 setNewMemory("");

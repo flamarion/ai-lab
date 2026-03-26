@@ -51,7 +51,7 @@ cp .env.example .env   # fill in WANDB_API_KEY and DATABASE_URL
 ```
 
 Services start at:
-- Chat UI: http://localhost:8501
+- Web UI: http://localhost:3000
 - LLM Gateway: http://localhost:8000
 - Gateway API docs: http://localhost:8000/docs
 
@@ -91,7 +91,7 @@ cp .env.example .env   # set POSTGRES_PASSWORD
 ./scripts/deploy-data.sh --down
 ```
 
-Services are accessible from any LAN device at `http://<ai-app-vm-ip>:8501` (Chat UI) and `http://<ai-app-vm-ip>:8000` (Gateway).
+Services are accessible from any LAN device at `http://<ai-app-vm-ip>` (Web UI, port 80 via nginx) and `http://<ai-app-vm-ip>/api` (Gateway).
 
 **How it works:** Deploy scripts run `git pull --ff-only` then `docker compose up --build -d`. Containers run detached so they survive SSH disconnect. `restart: unless-stopped` in the compose files handles VM reboots — no systemd needed.
 
@@ -126,6 +126,7 @@ User → nginx (:80) → Next.js (web-ui:3000) → FastAPI (llm-gateway:8000) �
 - `GET /models` — list available Ollama models (embedding models filtered out)
 - `GET /tools` — list available tools (name + description)
 - `POST /chat` — chat completion (accepts model, message, temperature, top_p, num_predict, system_prompt, use_rag, use_tools, user_id, history, conversation_id). When `use_tools=True`, the gateway orchestrates tool calls and returns `tools_used` in the response.
+- `POST /chat/stream` — streaming chat via SSE. Same params as `/chat` but returns real-time status events (`thinking`, `tool_call`, `tool_result`, `summarizing`) followed by a `done` event with the full response.
 
 **Auth:**
 - `GET /auth/users` — list usernames (for login dropdown, no IDs exposed)
@@ -248,15 +249,54 @@ MCP server config format (in `mcp_servers.json`):
 }
 ```
 
-Only tool-capable models work: llama3.1, qwen3.5, gemma3. mistral:7b and llama3 do not support Ollama's tools API.
+Only tool-capable models work: llama3.1, qwen3.5. mistral:7b, llama3, and gemma3 do not support Ollama's tools API.
+
+### Adding MCP Servers
+
+**Local MCP server (stdio)** — runs as a subprocess inside the gateway container:
+```json
+{"command": "python", "args": ["-m", "mcp_server_fetch"]}
+{"command": "npx", "args": ["-y", "kubernetes-mcp-server@latest", "--kubeconfig", "${file:KUBECONFIG}"]}
+{"command": "uvx", "args": ["--from", "git+https://github.com/wandb/wandb-mcp-server", "wandb_mcp_server"], "env": {"WANDB_API_KEY": "${WANDB_API_KEY}"}}
+```
+
+**OAuth MCP server** (Granola, Notion, Atlassian) — uses `mcp-remote` proxy:
+```json
+{"command": "npx", "args": ["-y", "mcp-remote", "https://mcp.granola.ai/mcp", "9102"]}
+```
+One-time auth: SSH to the ai-app VM, run `npx -y mcp-remote <url> <port>`, authenticate in browser, then `scp ~/.mcp-auth` from your Mac to the VM. Docker mounts `~/.mcp-auth` for token reuse.
+
+**HTTP MCP server** — connects to a remote endpoint:
+```json
+{"transport": "http", "url": "https://mcp.example.com/mcp", "headers": {"Authorization": "Bearer ${API_KEY}"}}
+```
+
+All configs go in the Admin → MCP Servers JSON editor. Use `${SECRET_NAME}` for inline secrets, `${file:SECRET_NAME}` for file-based secrets (kubeconfig, certificates).
+
+### Adding Local Tools
+
+See the docstring in `services/llm-gateway/src/tools.py` for a full guide. Quick steps:
+1. Write a function that takes simple args and returns a string
+2. Add it to `TOOL_REGISTRY` with an Ollama-compatible schema
+3. The gateway auto-discovers it on restart
+
+Built-in tools: `calculator`, `current_time`, `unit_convert`, `save_memory`.
+
+### RAG & Tools Configuration
+
+**Global defaults** (Settings page): model, temperature, top_p, num_predict, system prompt, RAG toggle, tools toggle. Auto-saved on change, persists in Postgres JSONB.
+
+**Per-chat overrides** (Chat input bar): Tools and RAG pill buttons override the global default for the current conversation only. Reset to defaults on new chat.
+
+**Per-user memory** (Settings → Memory): facts the AI remembers across all conversations. Auto-extracted every 6 turns, or add manually. The `save_memory` tool lets the model save facts during conversation ("remember that I prefer concise responses").
 
 ## Key Patterns
 
 - **Config**: All settings via env vars, centralized in `shared/python/ai_lab_common/config.py`. A singleton `settings` object is imported everywhere. `WANDB_API_KEY` and `DATABASE_URL` should be set in `.env`.
 - **Shared module imports**: In Docker, `PYTHONPATH=/app:/app/shared/python` enables `from ai_lab_common.config import settings`. For local dev, `services/llm-gateway/src/main.py` inserts the shared path into `sys.path` dynamically.
-- **Docker build contexts differ**: Gateway uses repo root as context (needs `shared/` and `services/`). Chat UI uses `apps/chat-ui/` as context (self-contained, no shared module access).
+- **Docker build contexts differ**: Gateway uses repo root as context (needs `shared/` and `services/`). Web UI uses `apps/web-ui/` as context (self-contained Next.js app).
 - **Tracing**: Gateway uses `@weave.op()` decorator on `OllamaClient.chat()` for automatic W&B Weave tracing.
-- **Chat UI → Gateway**: Uses internal Docker network hostname `http://llm-gateway:8000`, passed via `GATEWAY_URL` env var in docker-compose.
+- **Web UI → Gateway**: The Next.js app calls `/api/` which nginx proxies to the gateway container on port 8000.
 - **Graceful degradation**: Gateway starts even if Postgres, Qdrant, or Weave are unavailable — logs a warning and serves what it can.
 - **Database migrations**: Numbered SQL files in `infra/migrations/` are applied automatically on gateway startup. A `_migrations` table tracks what's been applied. No manual SQL execution needed on deploy.
 - **Cross-VM communication**: Services discover each other via LAN IP:port in env vars (same pattern for Ollama and Postgres).
