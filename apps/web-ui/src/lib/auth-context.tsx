@@ -54,10 +54,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const updatePreferences = useCallback(
     async (prefs: Record<string, unknown>) => {
       if (!user) return;
-      // Send only the new preferences — don't merge with the full blob
-      // (prevents accumulating stale/large data in preferences)
-      await auth.updatePreferences(user.user_id, prefs);
-      setUser((prev) => (prev ? { ...prev, preferences: prefs } : prev));
+      // Merge with existing preferences so keys not in the form
+      // (e.g. seed, num_ctx set via API) are preserved.
+      const merged = { ...(user.preferences || {}), ...prefs };
+      await auth.updatePreferences(user.user_id, merged);
+      setUser((prev) => (prev ? { ...prev, preferences: merged } : prev));
     },
     [user]
   );

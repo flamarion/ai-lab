@@ -50,20 +50,27 @@ function SettingsForm({ user }: { user: AuthResponse }) {
     memApi.list(user.user_id).then((d) => setMemories(d.memories)).catch(() => {});
   }, [user.user_id]);
 
-  // Auto-save on change (debounced, skips initial mount)
+  // Auto-save on change (debounced, skips initial mount).
+  // Saves are serialized: a new save waits for the previous one to complete,
+  // preventing out-of-order PATCHes from overwriting newer values.
   const hasInteracted = useRef(false);
+  const pendingSave = useRef<Promise<void>>(Promise.resolve());
   useEffect(() => {
     if (!hasInteracted.current) {
       hasInteracted.current = true;
-      return; // Skip first render — don't overwrite DB with init values
+      return;
     }
     const timeout = setTimeout(() => {
-      setSaving(true);
-      updatePreferences({
+      const prefs = {
         model, temperature, top_p: topP, top_k: topK, num_predict: numPredict,
         repeat_penalty: repeatPenalty, system_prompt: systemPrompt,
         use_rag: useRag, use_tools: useTools,
-      }).finally(() => setSaving(false));
+      };
+      setSaving(true);
+      pendingSave.current = pendingSave.current
+        .then(() => updatePreferences(prefs))
+        .catch(() => {})
+        .finally(() => setSaving(false));
     }, 500);
     return () => clearTimeout(timeout);
   }, [model, temperature, topP, topK, numPredict, repeatPenalty, systemPrompt, useRag, useTools]); // eslint-disable-line react-hooks/exhaustive-deps
