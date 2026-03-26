@@ -317,18 +317,22 @@ Phase 6.5 hybrid tool architecture:
 - Agent system prompt: planning instructions injected when tools enabled (think → act → observe)
 - Non-blocking gateway startup: all services init in background, gateway serves immediately
 
-**What you'll learn:**
+- Per-chat RAG/tools toggles: pill buttons in chat input bar override Settings defaults per conversation
+- Streaming status: SSE events show "Thinking...", "Using tool...", "Completed" in real-time
+- OAuth MCP servers via mcp-remote: authenticate on VM host, tokens cached in ~/.mcp-auth, mounted in Docker
+- Auto-save settings: preferences persist immediately on change (no Save button)
+
+**What you learned:**
 - Autonomous AI systems and the agent loop
 - Memory: short-term (conversation) vs long-term (persisted)
 - Planning and reasoning strategies
-- When to stop: exit conditions and guardrails
-
-- Per-chat RAG/tools toggles: pill buttons in chat input bar override Settings defaults per conversation
-- OAuth MCP servers: use `mcp-remote` proxy (npm package) for services like Granola, Notion, Atlassian that require browser-based OAuth. Config: `{"command": "npx", "args": ["-y", "mcp-remote", "https://mcp.granola.ai/mcp", "--callback-port", "9102"]}`
+- OAuth MCP limitations in Docker (localhost-only callbacks, mcp-remote workaround)
+- SSE streaming for real-time UI feedback during multi-step operations
 
 **Remaining work:**
 - Per-user document scoping (user-specific vs shared documents)
 - Agent loop refinement: multi-step planning with tool chains
+- Token streaming (show response as it generates, not all at once)
 
 ---
 
