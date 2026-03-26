@@ -35,7 +35,9 @@ function SettingsForm({ user }: { user: AuthResponse }) {
   const [model, setModel] = useState((prefs.model as string) || "Auto (recommended)");
   const [temperature, setTemperature] = useState((prefs.temperature as number) ?? 0.7);
   const [topP, setTopP] = useState((prefs.top_p as number) ?? 0.9);
+  const [topK, setTopK] = useState((prefs.top_k as number) ?? 40);
   const [numPredict, setNumPredict] = useState((prefs.num_predict as number) ?? 1024);
+  const [repeatPenalty, setRepeatPenalty] = useState((prefs.repeat_penalty as number) ?? 1.1);
   const [systemPrompt, setSystemPrompt] = useState((prefs.system_prompt as string) || "");
   const [useRag, setUseRag] = useState((prefs.use_rag as boolean) ?? false);
   const [useTools, setUseTools] = useState((prefs.use_tools as boolean) ?? false);
@@ -58,12 +60,13 @@ function SettingsForm({ user }: { user: AuthResponse }) {
     const timeout = setTimeout(() => {
       setSaving(true);
       updatePreferences({
-        model, temperature, top_p: topP, num_predict: numPredict,
-        system_prompt: systemPrompt, use_rag: useRag, use_tools: useTools,
+        model, temperature, top_p: topP, top_k: topK, num_predict: numPredict,
+        repeat_penalty: repeatPenalty, system_prompt: systemPrompt,
+        use_rag: useRag, use_tools: useTools,
       }).finally(() => setSaving(false));
     }, 500);
     return () => clearTimeout(timeout);
-  }, [model, temperature, topP, numPredict, systemPrompt, useRag, useTools]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [model, temperature, topP, topK, numPredict, repeatPenalty, systemPrompt, useRag, useTools]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUpload = async (files: FileList) => {
     for (const file of Array.from(files)) {
@@ -158,11 +161,31 @@ function SettingsForm({ user }: { user: AuthResponse }) {
               </div>
             </div>
             <div>
+              <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Top K</label>
+              <div className="flex items-center gap-4">
+                <input type="range" min={1} max={100} step={1} value={topK} onChange={(e) => setTopK(parseInt(e.target.value))} className="flex-1 accent-[var(--color-accent)]" />
+                <span className="text-sm font-mono w-8 text-center">{topK}</span>
+              </div>
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                Limits token selection to top K candidates. Lower = more focused.
+              </p>
+            </div>
+            <div>
               <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Max response length</label>
               <div className="flex items-center gap-4">
                 <input type="range" min={64} max={4096} step={64} value={numPredict} onChange={(e) => setNumPredict(parseInt(e.target.value))} className="flex-1 accent-[var(--color-accent)]" />
                 <span className="text-sm font-mono w-12 text-center">{numPredict}</span>
               </div>
+            </div>
+            <div>
+              <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Repeat penalty</label>
+              <div className="flex items-center gap-4">
+                <input type="range" min={0.5} max={2.0} step={0.05} value={repeatPenalty} onChange={(e) => setRepeatPenalty(parseFloat(e.target.value))} className="flex-1 accent-[var(--color-accent)]" />
+                <span className="text-sm font-mono w-8 text-center">{repeatPenalty}</span>
+              </div>
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                Penalizes repeated tokens. Higher = less repetition. 1.0 = off.
+              </p>
             </div>
             <div>
               <label className="block text-sm text-[var(--color-text-secondary)] mb-1">System prompt</label>

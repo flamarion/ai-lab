@@ -46,7 +46,7 @@ services:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:rw
       - searxng-data:/var/cache/searxng:rw
     environment:
-      - SEARXNG_BASE_URL=http://192.168.1.201/search/
+      - SEARXNG_BASE_URL=${SEARXNG_BASE_URL:-http://localhost/search/}
     cap_drop:
       - ALL
     cap_add:

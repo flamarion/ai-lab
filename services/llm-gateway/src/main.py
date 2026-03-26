@@ -143,7 +143,11 @@ class ChatRequest(BaseModel):
     model: str | None = None
     temperature: float = 0.7
     top_p: float | None = None
+    top_k: int | None = None
     num_predict: int | None = None
+    repeat_penalty: float | None = None
+    seed: int | None = None
+    num_ctx: int | None = None
     system_prompt: str | None = None
     use_rag: bool = False
     use_tools: bool = False
@@ -745,12 +749,15 @@ async def _retrieve_rag_context(message: str) -> str | None:
 
 
 def _build_options(request: ChatRequest) -> dict:
-    """Build the Ollama options dict from the request."""
+    """Build the Ollama options dict from the request.
+
+    Only includes non-None values — Ollama uses its defaults for anything omitted.
+    """
     options: dict = {"temperature": request.temperature}
-    if request.top_p is not None:
-        options["top_p"] = request.top_p
-    if request.num_predict is not None:
-        options["num_predict"] = request.num_predict
+    for key in ("top_p", "top_k", "num_predict", "repeat_penalty", "seed", "num_ctx"):
+        value = getattr(request, key)
+        if value is not None:
+            options[key] = value
     return options
 
 

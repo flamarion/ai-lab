@@ -107,7 +107,11 @@ export interface ChatParams {
   model?: string;
   temperature?: number;
   top_p?: number;
+  top_k?: number;
   num_predict?: number;
+  repeat_penalty?: number;
+  seed?: number;
+  num_ctx?: number;
   system_prompt?: string;
   use_rag?: boolean;
   use_tools?: boolean;

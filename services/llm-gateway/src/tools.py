@@ -102,10 +102,11 @@ Supported parameter types: string, integer, number, boolean, array, object.
 import ast
 import logging
 import math
-import os
 from datetime import datetime, timezone
 
 import httpx
+
+from ai_lab_common.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +234,7 @@ def save_memory(fact: str) -> str:
         return f"Error saving memory: {e}"
 
 
-_SEARXNG_URL = os.getenv("SEARXNG_URL", "http://searxng:8080")
+_SEARXNG_URL = settings.SEARXNG_URL
 
 
 def web_search(query: str, num_results: int = 5) -> str:
