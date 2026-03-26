@@ -336,6 +336,7 @@ Phase 6.5 hybrid tool architecture:
 **Remaining work:**
 - Per-user document scoping (user-specific vs shared documents)
 - Agent loop refinement: multi-step planning with tool chains
+- Fire-and-forget chat: server-side generation continues even if user navigates away mid-response
 
 ---
 
