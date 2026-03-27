@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth } from "@/lib/auth-context";
-import { chat as chatApi, conversations as convApi, type ToolUsed } from "@/lib/api";
+import { chat as chatApi, conversations as convApi, type ToolUsed, DEFAULT_PREFS } from "@/lib/api";
 import ChatSidebar from "@/components/chat-sidebar";
 import ChatMessageComponent from "@/components/chat-message";
 import { useRouter } from "next/navigation";
@@ -49,9 +49,11 @@ export default function ChatPage() {
     }).catch(() => {});
   }, [conversationId]);
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom (instant during streaming to avoid animation jank at high token rates)
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: streamingContent ? "instant" : "smooth" });
   }, [messages, sending, streamingContent]);
 
   // Auto-resize textarea
@@ -79,12 +81,16 @@ export default function ChatPage() {
       const params = {
         message: msg,
         model,
-        temperature: (prefs.temperature as number) ?? 0.7,
-        top_p: (prefs.top_p as number) ?? 0.9,
-        num_predict: (prefs.num_predict as number) ?? 1024,
+        temperature: (prefs.temperature as number) ?? DEFAULT_PREFS.temperature,
+        top_p: (prefs.top_p as number) ?? DEFAULT_PREFS.top_p,
+        top_k: (prefs.top_k as number) ?? DEFAULT_PREFS.top_k,
+        num_predict: (prefs.num_predict as number) ?? DEFAULT_PREFS.num_predict,
+        repeat_penalty: (prefs.repeat_penalty as number) ?? DEFAULT_PREFS.repeat_penalty,
+        seed: (prefs.seed as number) ?? undefined,
+        num_ctx: (prefs.num_ctx as number) ?? undefined,
         system_prompt: (prefs.system_prompt as string) || undefined,
-        use_rag: ragEnabled ?? (prefs.use_rag as boolean) ?? false,
-        use_tools: toolsEnabled ?? (prefs.use_tools as boolean) ?? false,
+        use_rag: ragEnabled ?? (prefs.use_rag as boolean) ?? DEFAULT_PREFS.use_rag,
+        use_tools: toolsEnabled ?? (prefs.use_tools as boolean) ?? DEFAULT_PREFS.use_tools,
         user_id: user.user_id,
         conversation_id: conversationId || undefined,
         history: conversationId ? undefined : messages.map((m) => ({ role: m.role, content: m.content })),

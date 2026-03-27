@@ -217,9 +217,8 @@ class OllamaClient:
 
             tool_calls = msg.get("tool_calls")
             if not tool_calls:
-                # Model produced a final text response — yield it directly.
-                # We reuse the already-generated content rather than re-querying,
-                # which avoids double latency and non-deterministic second answers.
+                # Reuse already-generated content — re-querying would double
+                # latency and produce a non-deterministic second answer.
                 content = msg.get("content", "")
                 if content:
                     yield {"type": "token", "text": content}

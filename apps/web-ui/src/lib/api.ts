@@ -102,12 +102,27 @@ export interface StatusEvent {
   detail: string;
 }
 
+/** Default preference values — shared between settings page and chat page. */
+export const DEFAULT_PREFS = {
+  temperature: 0.7,
+  top_p: 0.9,
+  top_k: 40,
+  num_predict: 1024,
+  repeat_penalty: 1.1,
+  use_rag: false,
+  use_tools: false,
+} as const;
+
 export interface ChatParams {
   message: string;
   model?: string;
   temperature?: number;
   top_p?: number;
+  top_k?: number;
   num_predict?: number;
+  repeat_penalty?: number;
+  seed?: number;
+  num_ctx?: number;
   system_prompt?: string;
   use_rag?: boolean;
   use_tools?: boolean;

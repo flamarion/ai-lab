@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth } from "@/lib/auth-context";
-import { type AuthResponse } from "@/lib/api";
+import { type AuthResponse, DEFAULT_PREFS } from "@/lib/api";
 import { chat as chatApi, documents as docsApi, auth as authApi, memory as memApi, type Memory } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -33,12 +33,14 @@ function SettingsForm({ user }: { user: AuthResponse }) {
   // to be loaded because this component only mounts after auth completes.
   const prefs = (user.preferences || {}) as Record<string, unknown>;
   const [model, setModel] = useState((prefs.model as string) || "Auto (recommended)");
-  const [temperature, setTemperature] = useState((prefs.temperature as number) ?? 0.7);
-  const [topP, setTopP] = useState((prefs.top_p as number) ?? 0.9);
-  const [numPredict, setNumPredict] = useState((prefs.num_predict as number) ?? 1024);
+  const [temperature, setTemperature] = useState((prefs.temperature as number) ?? DEFAULT_PREFS.temperature);
+  const [topP, setTopP] = useState((prefs.top_p as number) ?? DEFAULT_PREFS.top_p);
+  const [topK, setTopK] = useState((prefs.top_k as number) ?? DEFAULT_PREFS.top_k);
+  const [numPredict, setNumPredict] = useState((prefs.num_predict as number) ?? DEFAULT_PREFS.num_predict);
+  const [repeatPenalty, setRepeatPenalty] = useState((prefs.repeat_penalty as number) ?? DEFAULT_PREFS.repeat_penalty);
   const [systemPrompt, setSystemPrompt] = useState((prefs.system_prompt as string) || "");
-  const [useRag, setUseRag] = useState((prefs.use_rag as boolean) ?? false);
-  const [useTools, setUseTools] = useState((prefs.use_tools as boolean) ?? false);
+  const [useRag, setUseRag] = useState((prefs.use_rag as boolean) ?? DEFAULT_PREFS.use_rag);
+  const [useTools, setUseTools] = useState((prefs.use_tools as boolean) ?? DEFAULT_PREFS.use_tools);
   const [memories, setMemories] = useState<Memory[]>([]);
   const [newMemory, setNewMemory] = useState("");
 
@@ -48,22 +50,30 @@ function SettingsForm({ user }: { user: AuthResponse }) {
     memApi.list(user.user_id).then((d) => setMemories(d.memories)).catch(() => {});
   }, [user.user_id]);
 
-  // Auto-save on change (debounced, skips initial mount)
+  // Auto-save on change (debounced, skips initial mount).
+  // Saves are serialized: a new save waits for the previous one to complete,
+  // preventing out-of-order PATCHes from overwriting newer values.
   const hasInteracted = useRef(false);
+  const pendingSave = useRef<Promise<void>>(Promise.resolve());
   useEffect(() => {
     if (!hasInteracted.current) {
       hasInteracted.current = true;
-      return; // Skip first render — don't overwrite DB with init values
+      return;
     }
     const timeout = setTimeout(() => {
+      const prefs = {
+        model, temperature, top_p: topP, top_k: topK, num_predict: numPredict,
+        repeat_penalty: repeatPenalty, system_prompt: systemPrompt,
+        use_rag: useRag, use_tools: useTools,
+      };
       setSaving(true);
-      updatePreferences({
-        model, temperature, top_p: topP, num_predict: numPredict,
-        system_prompt: systemPrompt, use_rag: useRag, use_tools: useTools,
-      }).finally(() => setSaving(false));
+      pendingSave.current = pendingSave.current
+        .then(() => updatePreferences(prefs))
+        .catch(() => {})
+        .finally(() => setSaving(false));
     }, 500);
     return () => clearTimeout(timeout);
-  }, [model, temperature, topP, numPredict, systemPrompt, useRag, useTools]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [model, temperature, topP, topK, numPredict, repeatPenalty, systemPrompt, useRag, useTools]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUpload = async (files: FileList) => {
     for (const file of Array.from(files)) {
@@ -158,11 +168,31 @@ function SettingsForm({ user }: { user: AuthResponse }) {
               </div>
             </div>
             <div>
+              <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Top K</label>
+              <div className="flex items-center gap-4">
+                <input type="range" min={1} max={100} step={1} value={topK} onChange={(e) => setTopK(parseInt(e.target.value))} className="flex-1 accent-[var(--color-accent)]" />
+                <span className="text-sm font-mono w-8 text-center">{topK}</span>
+              </div>
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                Limits token selection to top K candidates. Lower = more focused.
+              </p>
+            </div>
+            <div>
               <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Max response length</label>
               <div className="flex items-center gap-4">
                 <input type="range" min={64} max={4096} step={64} value={numPredict} onChange={(e) => setNumPredict(parseInt(e.target.value))} className="flex-1 accent-[var(--color-accent)]" />
                 <span className="text-sm font-mono w-12 text-center">{numPredict}</span>
               </div>
+            </div>
+            <div>
+              <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Repeat penalty</label>
+              <div className="flex items-center gap-4">
+                <input type="range" min={0.5} max={2.0} step={0.05} value={repeatPenalty} onChange={(e) => setRepeatPenalty(parseFloat(e.target.value))} className="flex-1 accent-[var(--color-accent)]" />
+                <span className="text-sm font-mono w-8 text-center">{repeatPenalty}</span>
+              </div>
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                Penalizes repeated tokens. Higher = less repetition. 1.0 = off.
+              </p>
             </div>
             <div>
               <label className="block text-sm text-[var(--color-text-secondary)] mb-1">System prompt</label>

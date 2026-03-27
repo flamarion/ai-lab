@@ -336,17 +336,44 @@ Phase 6.5 hybrid tool architecture:
 **Remaining work:**
 - Per-user document scoping (user-specific vs shared documents)
 - Agent loop refinement: multi-step planning with tool chains
-- Token streaming (show response as it generates, not all at once)
+- Fire-and-forget chat: server-side generation continues even if user navigates away mid-response
 
 ---
 
-### Phase 7.5 — Web Search (SearXNG or Ollama)
-**What you'll build:** Proper web search capability — either self-hosted SearXNG or Ollama's cloud search API
-**What you'll learn:**
-- SearXNG: self-hosted meta search engine (aggregates Google, Bing, DuckDuckGo). Docker container on ai-app VM, JSON API, no API keys needed. Fully local.
-- Ollama web search: cloud API with search + fetch. Simpler setup but requires Ollama API key and internet access to their proxy.
-- The current MCP `fetch` tool reads URLs but can't search — different problem. Search finds relevant URLs, fetch reads them.
-- Decision: SearXNG fits the local-first homelab philosophy. Ollama search is the easy path if external dependency is acceptable.
+### Phase 7.5 — Web Search (SearXNG) ✅
+**What you built:** Self-hosted web search via SearXNG, integrated as a local tool in the gateway
+
+```
+Phase 7.5 web search flow:
+
+  User: "What's the weather in Amsterdam?"
+       │
+       ▼
+  Gateway → model calls web_search("weather Amsterdam today")
+                │
+                ▼
+         SearXNG (Docker, :8080)
+         ├── Google
+         ├── DuckDuckGo
+         ├── Brave
+         └── Wikipedia
+                │
+                ▼
+         JSON results → formatted text → model reads & answers
+```
+
+**Built:**
+- SearXNG Docker container on ai-app VM — self-hosted meta search, no API keys
+- `web_search` local tool in `tools.py` — hits SearXNG JSON API, returns top results
+- nginx route at `/search` — family can use SearXNG web UI directly
+- Config at `infra/docker/searxng/settings.yml` — JSON format enabled, limiter off for LAN
+
+**What you learned:**
+- SearXNG aggregates multiple search engines (Google, DuckDuckGo, Brave) into one JSON API
+- JSON format must be explicitly enabled in `settings.yml` (`formats: [html, json]`) — disabled by default
+- `X-Script-Name` header is required for nginx subpath deployments
+- The `fetch` MCP tool and `web_search` are complementary — search finds URLs, fetch reads them
+- Tools that do network I/O run fine in the threadpool executor (httpx sync client)
 
 ---
 

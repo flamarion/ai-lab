@@ -18,5 +18,14 @@ class Settings:
     QDRANT_PORT: int = int(os.getenv("QDRANT_PORT", "6333"))
     QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "ai-lab-docs")
 
+    # Embedding
+    EMBED_DIMENSION: int = int(os.getenv("EMBED_DIMENSION", "768"))
+
+    # Context management
+    CONTEXT_LIMIT: int = int(os.getenv("CONTEXT_LIMIT", "28000"))
+
+    # SearXNG (web search)
+    SEARXNG_URL: str = os.getenv("SEARXNG_URL", "http://searxng:8080")
+
 
 settings = Settings()

@@ -21,7 +21,7 @@ def init_store() -> None:
     if not _client.collection_exists(settings.QDRANT_COLLECTION):
         _client.create_collection(
             collection_name=settings.QDRANT_COLLECTION,
-            vectors_config=VectorParams(size=768, distance=Distance.COSINE),
+            vectors_config=VectorParams(size=settings.EMBED_DIMENSION, distance=Distance.COSINE),
         )
         logger.info("Created Qdrant collection: %s", settings.QDRANT_COLLECTION)
     else:

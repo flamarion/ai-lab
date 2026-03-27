@@ -36,3 +36,22 @@ services:
     depends_on:
       - llm-gateway
     restart: unless-stopped
+
+  searxng:
+    image: ghcr.io/searxng/searxng:latest
+    container_name: searxng
+    expose:
+      - "8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:rw
+      - searxng-data:/var/cache/searxng:rw
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    restart: unless-stopped
+
+volumes:
+  searxng-data:
