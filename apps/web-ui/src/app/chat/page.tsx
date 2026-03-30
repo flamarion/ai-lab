@@ -155,6 +155,7 @@ export default function ChatPage() {
   };
 
   const handleNewChat = (id: string | null) => {
+    const wasStreaming = !!abortRef.current;
     // Abort in-flight stream — server continues via fire-and-forget
     if (abortRef.current) {
       abortRef.current.abort();
@@ -167,7 +168,15 @@ export default function ChatPage() {
     setToolsEnabled(null);
     setMessages([]);
     setConversationId(id);
-    if (!id) setSidebarRefresh((n) => n + 1); // refresh list on new chat
+    if (!id) {
+      setSidebarRefresh((n) => n + 1);
+      // If we aborted a generation, it's still finishing server-side.
+      // Poll a few times so the conversation appears once persisted.
+      if (wasStreaming) {
+        setTimeout(() => setSidebarRefresh((n) => n + 1), 3000);
+        setTimeout(() => setSidebarRefresh((n) => n + 1), 8000);
+      }
+    }
   };
 
   const effectiveRag = ragEnabled ?? (prefs.use_rag as boolean) ?? false;
