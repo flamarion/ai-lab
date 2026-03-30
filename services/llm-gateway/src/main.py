@@ -970,16 +970,16 @@ async def chat_stream(request: ChatRequest):
             tools_used = []
             response_text = ""
 
+            plan = None
             if orchestrated and subtasks:
-                # Multi-agent orchestration: execute each subtask with its agent
+                # Multi-agent orchestration: execute each subtask
                 for i, st in enumerate(subtasks):
                     agent = agent_registry.get_agent(st.agent_name)
                     if not agent:
                         agent = scored_agents[0][0] if scored_agents else None
                     agent_label = agent.name if agent else "Default"
-                    yield f"event: status\ndata: {_json.dumps({'status': 'agent', 'detail': f'[{i+1}/{len(subtasks)}] {agent_label}: {st.description[:60]}'})}\n\n"
+                    await _put("status", {"status": "agent", "detail": f"[{i+1}/{len(subtasks)}] {agent_label}: {st.description[:60]}"})
 
-                    # Build subtask messages with agent system prompt
                     sub_messages = []
                     if agent and agent.system_prompt:
                         sub_messages.append({"role": "system", "content": f"## Agent: {agent.name}\n{agent.system_prompt}"})
@@ -998,13 +998,12 @@ async def chat_stream(request: ChatRequest):
                         logger.warning("Subtask %d failed: %s", i + 1, e)
 
                 # Synthesize results
-                yield f"event: status\ndata: {_json.dumps({'status': 'synthesizing', 'detail': 'Combining results...'})}\n\n"
+                await _put("status", {"status": "synthesizing", "detail": "Combining results..."})
                 response_text = await synthesize_results(request.message, subtasks, client, model)
-                yield f"event: token\ndata: {_json.dumps({'text': response_text})}\n\n"
+                await _put("token", {"text": response_text})
 
             elif request.use_tools:
-                yield f"event: status\ndata: {_json.dumps({'status': 'thinking', 'detail': f'Asking {model}...'})}\n\n"
-                # Single-agent tool loop (existing flow)
+                # Single-agent tool loop
                 async for event in client.chat_with_tools_stream(
                     model=model, messages=messages, options=options,
                     user_id=request.user_id,
@@ -1016,6 +1015,7 @@ async def chat_stream(request: ChatRequest):
                         await _put("token", {"text": event["text"]})
                     elif event["type"] == "done":
                         tools_used = event["tools_used"]
+                        plan = event.get("plan")
                 if tools_used:
                     logger.info("Tools used: %s", [t["name"] for t in tools_used])
             else:
@@ -1033,7 +1033,7 @@ async def chat_stream(request: ChatRequest):
             await _persist_turn(request, conversation_id, model, response_text, is_new, messages)
 
             # Send final result
-            await _put("done", {"response": response_text, "model": model, "conversation_id": conversation_id, "tools_used": tools_used})
+            await _put("done", {"response": response_text, "model": model, "conversation_id": conversation_id, "tools_used": tools_used, "plan": plan})
 
         except Exception as e:
             await _put("error", {"detail": str(e)})
