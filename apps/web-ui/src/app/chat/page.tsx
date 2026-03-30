@@ -12,6 +12,7 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   toolsUsed?: ToolUsed[];
+  plan?: string;
 }
 
 export default function ChatPage() {
@@ -117,6 +118,7 @@ export default function ChatPage() {
           role: "assistant",
           content: result.response,
           toolsUsed: result.tools_used.length > 0 ? result.tools_used : undefined,
+          plan: result.plan || undefined,
         },
       ]);
     } catch (err) {
@@ -222,6 +224,7 @@ export default function ChatPage() {
                   role={m.role}
                   content={m.content}
                   toolsUsed={m.toolsUsed}
+                  plan={m.plan}
                 />
               ))}
               {sending && (

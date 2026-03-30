@@ -869,6 +869,7 @@ async def chat_stream(request: ChatRequest):
             tools_used = []
             response_text = ""
 
+            plan = None
             if request.use_tools:
                 # Tool rounds are non-streaming; final answer streams tokens
                 async for event in client.chat_with_tools_stream(
@@ -882,6 +883,7 @@ async def chat_stream(request: ChatRequest):
                         yield f"event: token\ndata: {_json.dumps({'text': event['text']})}\n\n"
                     elif event["type"] == "done":
                         tools_used = event["tools_used"]
+                        plan = event.get("plan")
                 if tools_used:
                     logger.info("Tools used: %s", [t["name"] for t in tools_used])
             else:
@@ -899,7 +901,7 @@ async def chat_stream(request: ChatRequest):
             await _persist_turn(request, conversation_id, model, response_text, is_new, messages)
 
             # Send final result
-            yield f"event: done\ndata: {_json.dumps({'response': response_text, 'model': model, 'conversation_id': conversation_id, 'tools_used': tools_used})}\n\n"
+            yield f"event: done\ndata: {_json.dumps({'response': response_text, 'model': model, 'conversation_id': conversation_id, 'tools_used': tools_used, 'plan': plan})}\n\n"
 
         except Exception as e:
             yield f"event: error\ndata: {_json.dumps({'detail': str(e)})}\n\n"
