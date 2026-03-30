@@ -455,6 +455,72 @@ async def save_mcp_config(config: dict) -> None:
     )
 
 
+# --- Agents ---
+
+
+async def list_agents() -> list[dict]:
+    """Return all agents ordered by name."""
+    pool = _pool_or_raise()
+    rows = await pool.fetch(
+        "SELECT id, name, description, system_prompt, model, tools, "
+        "routing_keywords, enabled, created_at, updated_at "
+        "FROM agents ORDER BY name"
+    )
+    return [
+        {
+            "id": str(r["id"]),
+            "name": r["name"],
+            "description": r["description"],
+            "system_prompt": r["system_prompt"],
+            "model": r["model"],
+            "tools": list(r["tools"]),
+            "routing_keywords": list(r["routing_keywords"]),
+            "enabled": r["enabled"],
+            "created_at": r["created_at"].isoformat(),
+            "updated_at": r["updated_at"].isoformat(),
+        }
+        for r in rows
+    ]
+
+
+async def upsert_agent(config: dict) -> str:
+    """Create or update an agent by name. Returns the agent ID."""
+    pool = _pool_or_raise()
+    row = await pool.fetchrow(
+        """
+        INSERT INTO agents (name, description, system_prompt, model, tools, routing_keywords, enabled)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (name) DO UPDATE SET
+            description = EXCLUDED.description,
+            system_prompt = EXCLUDED.system_prompt,
+            model = EXCLUDED.model,
+            tools = EXCLUDED.tools,
+            routing_keywords = EXCLUDED.routing_keywords,
+            enabled = EXCLUDED.enabled,
+            updated_at = now()
+        RETURNING id
+        """,
+        config["name"],
+        config.get("description", ""),
+        config.get("system_prompt", ""),
+        config.get("model"),
+        config.get("tools", []),
+        config.get("routing_keywords", []),
+        config.get("enabled", True),
+    )
+    return str(row["id"])
+
+
+async def delete_agent(agent_id: str) -> bool:
+    """Delete an agent by ID. Returns True if it existed."""
+    pool = _pool_or_raise()
+    result = await pool.execute(
+        "DELETE FROM agents WHERE id = $1",
+        uuid.UUID(agent_id),
+    )
+    return result == "DELETE 1"
+
+
 # --- User Memory ---
 
 

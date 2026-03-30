@@ -18,6 +18,7 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
 
 from ai_lab_common.config import settings
 from src import chunker, context, db, migrations, router, tools, vector_store
+from src.agents import registry as agent_registry
 from src.mcp_client import mcp_manager
 from src.ollama_client import OllamaClient
 
@@ -118,6 +119,12 @@ async def lifespan(app: FastAPI):
             await mcp_manager.start()
         except Exception as e:
             logger.warning("MCP initialization failed: %s — MCP tools unavailable.", e)
+
+        # Agent registry
+        try:
+            await agent_registry.load()
+        except Exception as e:
+            logger.warning("Agent registry load failed: %s — agents unavailable.", e)
 
         logger.info("All services initialized")
 
@@ -638,6 +645,54 @@ async def restart_mcp(request: MCPAdminRequest):
 
 
 
+# --- Agent Management (admin-only) ---
+
+
+class AgentRequest(BaseModel):
+    admin_user_id: str
+    name: str
+    description: str = ""
+    system_prompt: str = ""
+    model: str | None = None
+    tools: list[str] = []
+    routing_keywords: list[str] = []
+    enabled: bool = True
+
+
+@app.get("/agents")
+async def list_agents(admin_user_id: str = Query(...)):
+    """Admin-only: list all configured agents."""
+    await _require_admin(admin_user_id)
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    agents = await db.list_agents()
+    return {"agents": agents}
+
+
+@app.post("/agents")
+async def upsert_agent(request: AgentRequest):
+    """Admin-only: create or update an agent."""
+    await _require_admin(request.admin_user_id)
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    agent_id = await db.upsert_agent(request.model_dump(exclude={"admin_user_id"}))
+    await agent_registry.load()  # reload in-memory registry
+    return {"status": "saved", "agent_id": agent_id}
+
+
+@app.delete("/agents/{agent_id}")
+async def delete_agent(agent_id: str, admin_user_id: str = Query(...)):
+    """Admin-only: delete an agent."""
+    await _require_admin(admin_user_id)
+    if not db.is_available():
+        raise HTTPException(status_code=503, detail="Database not available")
+    deleted = await db.delete_agent(agent_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    await agent_registry.load()  # reload in-memory registry
+    return {"status": "deleted"}
+
+
 # --- Secrets Management (admin-only) ---
 
 
@@ -882,6 +937,20 @@ async def chat_stream(request: ChatRequest):
 
             options = _build_options(request)
 
+            # Agent routing — pick a specialized agent based on the message
+            selected_agent = None
+            if request.use_tools:
+                selected_agent = agent_registry.route(request.message)
+                if selected_agent:
+                    await _put("status", {"status": "agent", "detail": f"Using {selected_agent.name} agent"})
+                    agent_prompt = f"## Agent: {selected_agent.name}\n{selected_agent.system_prompt}"
+                    if messages and messages[0].get("role") == "system":
+                        messages[0]["content"] = agent_prompt + "\n\n" + messages[0]["content"]
+                    else:
+                        messages.insert(0, {"role": "system", "content": agent_prompt})
+                    if selected_agent.model:
+                        model = selected_agent.model
+
             await _put("status", {"status": "thinking", "detail": f"Asking {model}..."})
 
             tools_used = []
@@ -981,6 +1050,20 @@ async def chat(request: ChatRequest):
         messages = await context.summarize_conversation(messages, client, model)
 
     options = _build_options(request)
+
+    # Agent routing — pick a specialized agent based on the message
+    selected_agent = None
+    if request.use_tools:
+        selected_agent = agent_registry.route(request.message)
+        if selected_agent:
+            logger.info("Agent selected: %s", selected_agent.name)
+            agent_prompt = f"## Agent: {selected_agent.name}\n{selected_agent.system_prompt}"
+            if messages and messages[0].get("role") == "system":
+                messages[0]["content"] = agent_prompt + "\n\n" + messages[0]["content"]
+            else:
+                messages.insert(0, {"role": "system", "content": agent_prompt})
+            if selected_agent.model:
+                model = selected_agent.model
 
     # Call Ollama — with or without tool use
     tools_used = []

@@ -254,6 +254,35 @@ export const admin = {
     }),
 };
 
+// --- Agents ---
+
+export interface AgentDef {
+  id: string;
+  name: string;
+  description: string;
+  system_prompt: string;
+  model: string | null;
+  tools: string[];
+  routing_keywords: string[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export const agents = {
+  list: (adminUserId: string) =>
+    request<{ agents: AgentDef[] }>(`/agents?admin_user_id=${adminUserId}`),
+
+  upsert: (adminUserId: string, agent: Omit<AgentDef, "id" | "created_at" | "updated_at">) =>
+    request<{ status: string; agent_id: string }>("/agents", {
+      method: "POST",
+      body: JSON.stringify({ admin_user_id: adminUserId, ...agent }),
+    }),
+
+  delete: (adminUserId: string, agentId: string) =>
+    request(`/agents/${agentId}?admin_user_id=${adminUserId}`, { method: "DELETE" }),
+};
+
 // --- MCP ---
 
 export interface MCPServer {
