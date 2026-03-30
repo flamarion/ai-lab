@@ -979,6 +979,7 @@ async def chat_stream(request: ChatRequest):
                 async for event in client.chat_with_tools_stream(
                     model=model, messages=messages, options=options,
                     user_id=request.user_id,
+                    allowed_tools=selected_agent.tools if selected_agent and selected_agent.tools else None,
                 ):
                     if event["type"] == "status":
                         yield f"event: status\ndata: {_json.dumps({'status': event['status'], 'detail': event['detail']})}\n\n"
@@ -1073,6 +1074,7 @@ async def chat(request: ChatRequest):
                 messages=messages,
                 options=options,
                 user_id=request.user_id,
+                allowed_tools=selected_agent.tools if selected_agent and selected_agent.tools else None,
             )
             if tools_used:
                 logger.info("Tools used: %s", [t["name"] for t in tools_used])

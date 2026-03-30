@@ -124,8 +124,9 @@ class AgentRegistry:
         try:
             rows = await db.list_agents()
 
-            # Seed defaults on first run
-            if not rows:
+            # Seed defaults only on first startup, not on subsequent reloads
+            # (so admins can delete all agents without them reappearing).
+            if not rows and not self._loaded:
                 logger.info("No agents in DB — seeding defaults")
                 await self._seed_defaults()
                 rows = await db.list_agents()
