@@ -168,6 +168,9 @@ function SettingsForm({ user }: { user: AuthResponse }) {
                 <input type="range" min={0} max={1} step={0.05} value={topP} onChange={(e) => setTopP(parseFloat(e.target.value))} className="flex-1 accent-[var(--color-accent)]" />
                 <span className="text-sm font-mono w-8 text-center">{topP}</span>
               </div>
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                Nucleus sampling — considers tokens within the top P probability mass. Lower = more predictable.
+              </p>
             </div>
             <div>
               <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Top K</label>
@@ -185,6 +188,9 @@ function SettingsForm({ user }: { user: AuthResponse }) {
                 <input type="range" min={64} max={4096} step={64} value={numPredict} onChange={(e) => setNumPredict(parseInt(e.target.value))} className="flex-1 accent-[var(--color-accent)]" />
                 <span className="text-sm font-mono w-12 text-center">{numPredict}</span>
               </div>
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                Maximum tokens in the response. Higher = longer answers but slower.
+              </p>
             </div>
             <div>
               <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Repeat penalty</label>
