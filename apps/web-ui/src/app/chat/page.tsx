@@ -36,6 +36,15 @@ export default function ChatPage() {
     if (!loading && !user) router.replace("/login");
   }, [user, loading, router]);
 
+  // Refresh sidebar when the tab regains focus (picks up fire-and-forget completions)
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") setSidebarRefresh((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
+
   // Load conversation when selected
   useEffect(() => {
     if (!conversationId) return;
@@ -137,6 +146,7 @@ export default function ChatPage() {
     setToolsEnabled(null);
     setMessages([]);
     setConversationId(id);
+    if (!id) setSidebarRefresh((n) => n + 1); // refresh list on new chat
   };
 
   const effectiveRag = ragEnabled ?? (prefs.use_rag as boolean) ?? false;
