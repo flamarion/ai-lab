@@ -3,7 +3,6 @@ use_default_settings:
     keep_only:
       - google
       - duckduckgo
-      - brave
       - wikipedia
       - wikidata
       - currency
@@ -36,5 +35,3 @@ engines:
     weight: 2
   - name: duckduckgo
     weight: 2
-  - name: brave
-    weight: 1
