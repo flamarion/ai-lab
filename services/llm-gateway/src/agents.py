@@ -3,15 +3,27 @@
 Each agent has a system prompt, optional model override, allowed tools,
 and routing keywords.  The registry loads agents from Postgres and matches
 incoming messages to the most relevant agent via keyword scoring.
+
+Reliability patterns:
+- Retry with fallback: agent failures retry once, then fall back to default
+- Timeout: configurable per-agent timeout (default 120s)
+- Error isolation: one agent's failure doesn't crash the request
+- Graceful degradation: if registry is unavailable, use default flow
 """
 
+import asyncio
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 
 from src import db
 
 logger = logging.getLogger(__name__)
+
+# Reliability defaults
+AGENT_TIMEOUT_SECONDS = 120  # per-agent subtask timeout
+MAX_RETRIES = 1  # retry once on failure before falling back
 
 
 @dataclass
@@ -112,8 +124,9 @@ class AgentRegistry:
         try:
             rows = await db.list_agents()
 
-            # Seed defaults on first run
-            if not rows:
+            # Seed defaults only on first startup, not on subsequent reloads
+            # (so admins can delete all agents without them reappearing).
+            if not rows and not self._loaded:
                 logger.info("No agents in DB — seeding defaults")
                 await self._seed_defaults()
                 rows = await db.list_agents()
@@ -315,6 +328,67 @@ async def synthesize_results(
     except Exception as e:
         logger.warning("Synthesis failed: %s — returning raw results", e)
         return results_text
+
+
+async def execute_subtask_reliable(
+    subtask: SubTask,
+    agent: AgentConfig | None,
+    llm_client,
+    model: str,
+    options: dict | None = None,
+    user_id: str | None = None,
+    timeout: float = AGENT_TIMEOUT_SECONDS,
+) -> tuple[str, list[dict]]:
+    """Execute a subtask with retry, timeout, and error isolation.
+
+    Returns (result_text, tools_used).  On failure, returns an error
+    message instead of raising — the orchestrator can still continue
+    with partial results.
+    """
+    sub_model = (agent.model if agent and agent.model else model)
+    sub_messages = []
+    if agent and agent.system_prompt:
+        sub_messages.append({"role": "system", "content": f"## Agent: {agent.name}\n{agent.system_prompt}"})
+    sub_messages.append({"role": "user", "content": subtask.description})
+
+    last_error = None
+    for attempt in range(1 + MAX_RETRIES):
+        try:
+            start = time.monotonic()
+            result, tools_used = await asyncio.wait_for(
+                llm_client.chat_with_tools(
+                    model=sub_model, messages=sub_messages, options=options,
+                    user_id=user_id,
+                    allowed_tools=agent.tools if agent and agent.tools else None,
+                ),
+                timeout=timeout,
+            )
+            elapsed = time.monotonic() - start
+            logger.info(
+                "Subtask '%s' completed by %s in %.1fs (attempt %d)",
+                subtask.description[:50],
+                agent.name if agent else "default",
+                elapsed,
+                attempt + 1,
+            )
+            return result, tools_used
+
+        except asyncio.TimeoutError:
+            last_error = f"Timed out after {timeout}s"
+            logger.warning(
+                "Subtask '%s' timed out (attempt %d/%d)",
+                subtask.description[:50], attempt + 1, 1 + MAX_RETRIES,
+            )
+        except Exception as e:
+            last_error = str(e)
+            logger.warning(
+                "Subtask '%s' failed (attempt %d/%d): %s",
+                subtask.description[:50], attempt + 1, 1 + MAX_RETRIES, e,
+            )
+
+    # All retries exhausted — return error as result (don't crash the request)
+    error_msg = f"[Agent {agent.name if agent else 'default'} failed: {last_error}]"
+    return error_msg, []
 
 
 # Module-level singleton

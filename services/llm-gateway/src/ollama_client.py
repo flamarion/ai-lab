@@ -135,6 +135,7 @@ class OllamaClient:
         max_tool_rounds: int = 5,
         on_status=None,
         user_id: str | None = None,
+        allowed_tools: list[str] | None = None,
     ) -> tuple[str, list[dict]]:
         """Chat with tool use support.
 
@@ -166,6 +167,8 @@ class OllamaClient:
         # Phase 2: Tool execution loop
         # Merge local tools + MCP tools into one list for the model
         tool_schemas = tools.get_tool_schemas() + mcp_manager.get_tool_schemas()
+        if allowed_tools:
+            tool_schemas = [s for s in tool_schemas if s["function"]["name"] in allowed_tools]
         tools_used = []
 
         for round_num in range(max_tool_rounds):
@@ -247,6 +250,7 @@ class OllamaClient:
         options: dict | None = None,
         max_tool_rounds: int = 5,
         user_id: str | None = None,
+        allowed_tools: list[str] | None = None,
     ) -> AsyncIterator[dict]:
         """Streaming tool use. Yields dicts:
         {"type": "status", "status": str, "detail": str}
@@ -265,6 +269,8 @@ class OllamaClient:
 
         # Phase 2: Tool execution loop
         tool_schemas = tools.get_tool_schemas() + mcp_manager.get_tool_schemas()
+        if allowed_tools:
+            tool_schemas = [s for s in tool_schemas if s["function"]["name"] in allowed_tools]
         tools_used = []
 
         for round_num in range(max_tool_rounds):

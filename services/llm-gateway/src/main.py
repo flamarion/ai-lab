@@ -18,7 +18,7 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
 
 from ai_lab_common.config import settings
 from src import chunker, context, db, migrations, router, tools, vector_store
-from src.agents import registry as agent_registry, decompose_task, synthesize_results
+from src.agents import registry as agent_registry, decompose_task, synthesize_results, execute_subtask_reliable
 from src.mcp_client import mcp_manager
 from src.ollama_client import OllamaClient
 
@@ -945,7 +945,7 @@ async def chat_stream(request: ChatRequest):
 
                 # If multiple agents match, try task decomposition
                 if len(scored_agents) >= 2 and len(request.message) >= 40:
-                    yield f"event: status\ndata: {_json.dumps({'status': 'orchestrating', 'detail': 'Analyzing task...'})}\n\n"
+                    await _put("status", {"status": "orchestrating", "detail": "Analyzing task..."})
                     subtasks = await decompose_task(
                         request.message,
                         [a for a, _ in scored_agents],
@@ -972,7 +972,7 @@ async def chat_stream(request: ChatRequest):
 
             plan = None
             if orchestrated and subtasks:
-                # Multi-agent orchestration: execute each subtask
+                # Multi-agent orchestration: execute each subtask reliably
                 for i, st in enumerate(subtasks):
                     agent = agent_registry.get_agent(st.agent_name)
                     if not agent:
@@ -980,22 +980,12 @@ async def chat_stream(request: ChatRequest):
                     agent_label = agent.name if agent else "Default"
                     await _put("status", {"status": "agent", "detail": f"[{i+1}/{len(subtasks)}] {agent_label}: {st.description[:60]}"})
 
-                    sub_messages = []
-                    if agent and agent.system_prompt:
-                        sub_messages.append({"role": "system", "content": f"## Agent: {agent.name}\n{agent.system_prompt}"})
-                    sub_messages.append({"role": "user", "content": st.description})
-
-                    sub_model = (agent.model if agent and agent.model else model)
-                    try:
-                        sub_result, sub_tools = await client.chat_with_tools(
-                            model=sub_model, messages=sub_messages, options=options,
-                            user_id=request.user_id,
-                        )
-                        st.result = sub_result
-                        tools_used.extend(sub_tools)
-                    except Exception as e:
-                        st.result = f"Error: {e}"
-                        logger.warning("Subtask %d failed: %s", i + 1, e)
+                    sub_result, sub_tools = await execute_subtask_reliable(
+                        subtask=st, agent=agent, llm_client=client,
+                        model=model, options=options, user_id=request.user_id,
+                    )
+                    st.result = sub_result
+                    tools_used.extend(sub_tools)
 
                 # Synthesize results
                 await _put("status", {"status": "synthesizing", "detail": "Combining results..."})
@@ -1003,10 +993,12 @@ async def chat_stream(request: ChatRequest):
                 await _put("token", {"text": response_text})
 
             elif request.use_tools:
+                await _put("status", {"status": "thinking", "detail": f"Asking {model}..."})
                 # Single-agent tool loop
                 async for event in client.chat_with_tools_stream(
                     model=model, messages=messages, options=options,
                     user_id=request.user_id,
+                    allowed_tools=selected_agent.tools if selected_agent and selected_agent.tools else None,
                 ):
                     if event["type"] == "status":
                         await _put("status", {"status": event["status"], "detail": event["detail"]})
@@ -1119,6 +1111,7 @@ async def chat(request: ChatRequest):
                 messages=messages,
                 options=options,
                 user_id=request.user_id,
+                allowed_tools=selected_agent.tools if selected_agent and selected_agent.tools else None,
             )
             if tools_used:
                 logger.info("Tools used: %s", [t["name"] for t in tools_used])
