@@ -341,13 +341,19 @@ export const memory = {
 // --- Documents ---
 
 export const documents = {
-  list: () => request<{ documents: { id: string; source: string; num_chunks: number; created_at: string }[] }>("/documents"),
+  list: (userId?: string) =>
+    request<{ documents: { id: string; source: string; num_chunks: number; created_at: string; user_id: string | null; is_private: boolean }[] }>(
+      userId ? `/documents?user_id=${userId}` : "/documents",
+    ),
 
-  delete: (id: string) => request(`/documents/${id}`, { method: "DELETE" }),
+  delete: (id: string, userId?: string) =>
+    request(`/documents/${id}${userId ? `?user_id=${userId}` : ""}`, { method: "DELETE" }),
 
-  ingest: async (file: File) => {
+  ingest: async (file: File, userId?: string, isPrivate = false) => {
     const form = new FormData();
     form.append("file", file);
+    if (userId) form.append("user_id", userId);
+    if (isPrivate) form.append("is_private", "true");
     const res = await fetch(`${BASE}/ingest`, { method: "POST", body: form });
     if (!res.ok) throw new Error("Upload failed");
     return res.json();
