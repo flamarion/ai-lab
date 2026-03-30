@@ -887,6 +887,7 @@ async def chat_stream(request: ChatRequest):
             tools_used = []
             response_text = ""
 
+            plan = None
             if request.use_tools:
                 # Tool rounds are non-streaming; final answer streams tokens
                 async for event in client.chat_with_tools_stream(
@@ -900,6 +901,7 @@ async def chat_stream(request: ChatRequest):
                         await _put("token", {"text": event["text"]})
                     elif event["type"] == "done":
                         tools_used = event["tools_used"]
+                        plan = event.get("plan")
                 if tools_used:
                     logger.info("Tools used: %s", [t["name"] for t in tools_used])
             else:
@@ -917,7 +919,7 @@ async def chat_stream(request: ChatRequest):
             await _persist_turn(request, conversation_id, model, response_text, is_new, messages)
 
             # Send final result
-            await _put("done", {"response": response_text, "model": model, "conversation_id": conversation_id, "tools_used": tools_used})
+            await _put("done", {"response": response_text, "model": model, "conversation_id": conversation_id, "tools_used": tools_used, "plan": plan})
 
         except Exception as e:
             await _put("error", {"detail": str(e)})

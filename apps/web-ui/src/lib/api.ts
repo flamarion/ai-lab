@@ -83,6 +83,7 @@ export interface ChatResponse {
   model: string;
   conversation_id: string;
   tools_used: ToolUsed[];
+  plan: string | null;
 }
 
 export interface Conversation {
