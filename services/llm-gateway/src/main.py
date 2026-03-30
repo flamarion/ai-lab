@@ -835,10 +835,16 @@ async def chat_stream(request: ChatRequest):
 
     is_child = await _get_is_child(request.user_id)
     queue: asyncio.Queue = asyncio.Queue()
+    disconnected = asyncio.Event()
 
     async def _run_generation():
         """Produce events onto *queue*. Runs as a background task."""
         async def _put(event: str, data: dict):
+            # Skip status/token events when consumer is gone to avoid
+            # unbounded queue growth.  Always enqueue done/error so
+            # _persist_turn results are not lost.
+            if disconnected.is_set() and event in ("status", "token"):
+                return
             await queue.put({"event": event, "data": data})
 
         try:
@@ -931,7 +937,7 @@ async def chat_stream(request: ChatRequest):
                     break
                 yield f"event: {event['event']}\ndata: {_json.dumps(event['data'])}\n\n"
         except (asyncio.CancelledError, GeneratorExit):
-            pass  # generation task continues in background
+            disconnected.set()  # tell _run_generation to stop queuing
 
     return StreamingResponse(_sse_consumer(), media_type="text/event-stream")
 
