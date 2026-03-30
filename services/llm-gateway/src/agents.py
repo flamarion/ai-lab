@@ -358,6 +358,7 @@ async def execute_subtask_reliable(
                 llm_client.chat_with_tools(
                     model=sub_model, messages=sub_messages, options=options,
                     user_id=user_id,
+                    allowed_tools=agent.tools if agent and agent.tools else None,
                 ),
                 timeout=timeout,
             )
