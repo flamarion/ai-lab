@@ -18,7 +18,7 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
 
 from ai_lab_common.config import settings
 from src import chunker, context, db, migrations, router, tools, vector_store
-from src.agents import registry as agent_registry
+from src.agents import registry as agent_registry, decompose_task, synthesize_results
 from src.mcp_client import mcp_manager
 from src.ollama_client import OllamaClient
 
@@ -919,29 +919,74 @@ async def chat_stream(request: ChatRequest):
 
             options = _build_options(request)
 
-            # Agent routing — pick a specialized agent based on the message
+            # Agent routing — pick a specialized agent or orchestrate multi-agent
             selected_agent = None
+            orchestrated = False
             if request.use_tools:
-                selected_agent = agent_registry.route(request.message)
+                scored_agents = agent_registry.route_multi(request.message)
+
+                # If multiple agents match, try task decomposition
+                if len(scored_agents) >= 2 and len(request.message) >= 40:
+                    yield f"event: status\ndata: {_json.dumps({'status': 'orchestrating', 'detail': 'Analyzing task...'})}\n\n"
+                    subtasks = await decompose_task(
+                        request.message,
+                        [a for a, _ in scored_agents],
+                        client, model,
+                    )
+                    if subtasks:
+                        orchestrated = True
+
+                if not orchestrated and scored_agents:
+                    selected_agent = scored_agents[0][0]
+
                 if selected_agent:
                     yield f"event: status\ndata: {_json.dumps({'status': 'agent', 'detail': f'Using {selected_agent.name} agent'})}\n\n"
-                    # Prepend agent system prompt
                     agent_prompt = f"## Agent: {selected_agent.name}\n{selected_agent.system_prompt}"
                     if messages and messages[0].get("role") == "system":
                         messages[0]["content"] = agent_prompt + "\n\n" + messages[0]["content"]
                     else:
                         messages.insert(0, {"role": "system", "content": agent_prompt})
-                    # Override model if the agent specifies one
                     if selected_agent.model:
                         model = selected_agent.model
-
-            yield f"event: status\ndata: {_json.dumps({'status': 'thinking', 'detail': f'Asking {model}...'})}\n\n"
 
             tools_used = []
             response_text = ""
 
-            if request.use_tools:
-                # Tool rounds are non-streaming; final answer streams tokens
+            if orchestrated and subtasks:
+                # Multi-agent orchestration: execute each subtask with its agent
+                for i, st in enumerate(subtasks):
+                    agent = agent_registry.get_agent(st.agent_name)
+                    if not agent:
+                        agent = scored_agents[0][0] if scored_agents else None
+                    agent_label = agent.name if agent else "Default"
+                    yield f"event: status\ndata: {_json.dumps({'status': 'agent', 'detail': f'[{i+1}/{len(subtasks)}] {agent_label}: {st.description[:60]}'})}\n\n"
+
+                    # Build subtask messages with agent system prompt
+                    sub_messages = []
+                    if agent and agent.system_prompt:
+                        sub_messages.append({"role": "system", "content": f"## Agent: {agent.name}\n{agent.system_prompt}"})
+                    sub_messages.append({"role": "user", "content": st.description})
+
+                    sub_model = (agent.model if agent and agent.model else model)
+                    try:
+                        sub_result, sub_tools = await client.chat_with_tools(
+                            model=sub_model, messages=sub_messages, options=options,
+                            user_id=request.user_id,
+                        )
+                        st.result = sub_result
+                        tools_used.extend(sub_tools)
+                    except Exception as e:
+                        st.result = f"Error: {e}"
+                        logger.warning("Subtask %d failed: %s", i + 1, e)
+
+                # Synthesize results
+                yield f"event: status\ndata: {_json.dumps({'status': 'synthesizing', 'detail': 'Combining results...'})}\n\n"
+                response_text = await synthesize_results(request.message, subtasks, client, model)
+                yield f"event: token\ndata: {_json.dumps({'text': response_text})}\n\n"
+
+            elif request.use_tools:
+                yield f"event: status\ndata: {_json.dumps({'status': 'thinking', 'detail': f'Asking {model}...'})}\n\n"
+                # Single-agent tool loop (existing flow)
                 async for event in client.chat_with_tools_stream(
                     model=model, messages=messages, options=options,
                     user_id=request.user_id,

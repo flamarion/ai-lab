@@ -182,5 +182,140 @@ class AgentRegistry:
         return None
 
 
+    def route_multi(self, message: str) -> list[tuple[AgentConfig, int]]:
+        """Score all enabled agents. Returns [(agent, score)] sorted by score desc.
+
+        Useful for the orchestrator to decide if multiple agents should
+        collaborate on a task.
+        """
+        scored = []
+        for agent in self._agents.values():
+            if not agent.enabled:
+                continue
+            score = agent.score(message)
+            if score > 0:
+                scored.append((agent, score))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored
+
+
+# Prompt template for task decomposition
+DECOMPOSE_PROMPT = (
+    "You are a task orchestrator. Given a user request and a list of available "
+    "specialized agents, decide whether the task needs multiple agents or just one.\n\n"
+    "Available agents:\n{agent_list}\n\n"
+    "Rules:\n"
+    "- If the task clearly maps to a single agent, output: SINGLE <agent_name>\n"
+    "- If the task needs multiple agents, output a numbered plan where each step "
+    "is assigned to an agent:\n"
+    "  1. [AgentName] description of subtask\n"
+    "  2. [AgentName] description of subtask\n"
+    "- Keep it to 2-4 steps maximum\n"
+    "- Output ONLY the routing decision, nothing else"
+)
+
+SYNTHESIZE_PROMPT = (
+    "You are synthesizing results from multiple specialized agents into a "
+    "coherent final answer for the user.\n\n"
+    "The user asked: {question}\n\n"
+    "Here are the results from each agent:\n{results}\n\n"
+    "Combine these into a clear, well-organized response. "
+    "Credit the sources where appropriate."
+)
+
+
+@dataclass
+class SubTask:
+    """A subtask assigned to a specific agent."""
+    agent_name: str
+    description: str
+    result: str = ""
+
+
+async def decompose_task(
+    message: str,
+    agents: list[AgentConfig],
+    llm_client,
+    model: str,
+) -> list[SubTask] | None:
+    """Use the LLM to decide if a task needs multiple agents.
+
+    Returns a list of SubTasks if decomposition is needed,
+    or None if a single agent suffices (caller should use normal routing).
+    """
+    agent_list = "\n".join(
+        f"- {a.name}: {a.description}" for a in agents
+    )
+    prompt = DECOMPOSE_PROMPT.format(agent_list=agent_list)
+
+    try:
+        response = await llm_client.chat(
+            model=model,
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": message},
+            ],
+            options={"temperature": 0.2, "num_predict": 200},
+        )
+
+        response = response.strip()
+
+        # Single agent — no decomposition needed
+        if response.upper().startswith("SINGLE"):
+            return None
+
+        # Parse numbered plan: "1. [AgentName] description"
+        subtasks = []
+        for line in response.splitlines():
+            line = line.strip()
+            if not line or not line[0].isdigit():
+                continue
+            # Remove leading number and punctuation
+            line = re.sub(r"^\d+[\.\)]\s*", "", line)
+            # Extract [AgentName]
+            match = re.match(r"\[([^\]]+)\]\s*(.*)", line)
+            if match:
+                agent_name = match.group(1).strip()
+                description = match.group(2).strip()
+                subtasks.append(SubTask(agent_name=agent_name, description=description))
+
+        if len(subtasks) >= 2:
+            logger.info("Decomposed into %d subtasks: %s", len(subtasks),
+                        [(s.agent_name, s.description[:50]) for s in subtasks])
+            return subtasks
+
+    except Exception as e:
+        logger.warning("Task decomposition failed: %s", e)
+
+    return None
+
+
+async def synthesize_results(
+    question: str,
+    subtasks: list[SubTask],
+    llm_client,
+    model: str,
+) -> str:
+    """Combine results from multiple agent subtasks into a final answer."""
+    results_text = "\n\n".join(
+        f"### {st.agent_name}: {st.description}\n{st.result}"
+        for st in subtasks if st.result
+    )
+    prompt = SYNTHESIZE_PROMPT.format(question=question, results=results_text)
+
+    try:
+        return await llm_client.chat(
+            model=model,
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": "Please synthesize the results above."},
+            ],
+            options={"temperature": 0.3, "num_predict": 1000},
+        )
+    except Exception as e:
+        logger.warning("Synthesis failed: %s — returning raw results", e)
+        return results_text
+
+
 # Module-level singleton
 registry = AgentRegistry()
