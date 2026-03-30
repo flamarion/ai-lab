@@ -25,7 +25,7 @@ export default function SettingsPage() {
 function SettingsForm({ user }: { user: AuthResponse }) {
   const { updatePreferences } = useAuth();
   const [models, setModels] = useState<string[]>([]);
-  const [docs, setDocs] = useState<{ id: string; source: string; num_chunks: number }[]>([]);
+  const [docs, setDocs] = useState<{ id: string; source: string; num_chunks: number; user_id: string | null; is_private: boolean }[]>([]);
   const [saving, setSaving] = useState(false);
   const [pinSection, setPinSection] = useState({ current: "", new_pin: "", message: "" });
 
@@ -46,7 +46,7 @@ function SettingsForm({ user }: { user: AuthResponse }) {
 
   useEffect(() => {
     chatApi.models().then((d) => setModels(d.models)).catch(() => {});
-    docsApi.list().then((d) => setDocs(d.documents)).catch(() => {});
+    docsApi.list(user.user_id).then((d) => setDocs(d.documents)).catch(() => {});
     memApi.list(user.user_id).then((d) => setMemories(d.memories)).catch(() => {});
   }, [user.user_id]);
 
@@ -75,21 +75,23 @@ function SettingsForm({ user }: { user: AuthResponse }) {
     return () => clearTimeout(timeout);
   }, [model, temperature, topP, topK, numPredict, repeatPenalty, systemPrompt, useRag, useTools]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const [uploadPrivate, setUploadPrivate] = useState(false);
+
   const handleUpload = async (files: FileList) => {
     for (const file of Array.from(files)) {
       try {
-        await docsApi.ingest(file);
+        await docsApi.ingest(file, user.user_id, uploadPrivate);
       } catch {
         alert(`Failed to upload ${file.name}`);
       }
     }
     // Refresh list once after all uploads complete
-    docsApi.list().then((d) => setDocs(d.documents)).catch(() => {});
+    docsApi.list(user.user_id).then((d) => setDocs(d.documents)).catch(() => {});
   };
 
   const handleDeleteDoc = async (id: string) => {
     if (!confirm("Delete this document? This cannot be undone.")) return;
-    await docsApi.delete(id).catch(() => {});
+    await docsApi.delete(id, user.user_id).catch(() => {});
     setDocs((prev) => prev.filter((d) => d.id !== id));
   };
 
@@ -271,22 +273,36 @@ function SettingsForm({ user }: { user: AuthResponse }) {
           <p className="text-xs text-[var(--color-text-muted)] mb-3">
             Upload documents for RAG. Supports PDF, DOCX, XLSX, text, code.
           </p>
-          <label className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-dashed border-[var(--color-border)] text-sm text-[var(--color-text-secondary)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors cursor-pointer">
-            <Upload size={16} />
-            Upload files
-            <input
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(e) => e.target.files && handleUpload(e.target.files)}
-            />
-          </label>
+          <div className="flex items-center gap-4 mb-2">
+            <label className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-dashed border-[var(--color-border)] text-sm text-[var(--color-text-secondary)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors cursor-pointer">
+              <Upload size={16} />
+              Upload files
+              <input
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => e.target.files && handleUpload(e.target.files)}
+              />
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)] cursor-pointer select-none whitespace-nowrap">
+              <input
+                type="checkbox"
+                checked={uploadPrivate}
+                onChange={(e) => setUploadPrivate(e.target.checked)}
+                className="accent-[var(--color-accent)]"
+              />
+              Private
+            </label>
+          </div>
           {docs.length > 0 && (
             <div className="mt-3 space-y-1">
               {docs.map((d) => (
                 <div key={d.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-bg-secondary)] text-sm">
                   <FileText size={14} className="text-[var(--color-text-muted)]" />
                   <span className="flex-1 truncate">{d.source}</span>
+                  {d.is_private && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-accent)] text-white leading-none">private</span>
+                  )}
                   <span className="text-xs text-[var(--color-text-muted)]">{d.num_chunks} chunks</span>
                   <button onClick={() => handleDeleteDoc(d.id)} className="text-[var(--color-text-muted)] hover:text-[var(--color-error)]">
                     <Trash2 size={13} />

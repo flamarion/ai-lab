@@ -31,11 +31,21 @@ export default function ChatPage() {
   const [toolsEnabled, setToolsEnabled] = useState<boolean | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Redirect if not logged in
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
   }, [user, loading, router]);
+
+  // Refresh sidebar when the tab regains focus (picks up fire-and-forget completions)
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") setSidebarRefresh((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   // Load conversation when selected
   useEffect(() => {
@@ -75,6 +85,12 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, { role: "user", content: msg }]);
     setSending(true);
 
+    // Create an AbortController so navigating away can disconnect the
+    // SSE stream without blocking the UI.  The server-side generation
+    // continues via fire-and-forget.
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       const savedModel = prefs.model as string | undefined;
       const model = savedModel && savedModel !== "Auto (recommended)" ? savedModel : undefined;
@@ -106,6 +122,7 @@ export default function ChatPage() {
           setStatusText("");
           setStreamingContent((prev) => prev + token);
         },
+        controller.signal,
       );
 
       setStreamingContent("");
@@ -122,6 +139,8 @@ export default function ChatPage() {
         },
       ]);
     } catch (err) {
+      // AbortError is expected when navigating to a new chat — don't show it
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setStatusText("");
       setStreamingContent("");
       setMessages((prev) => [
@@ -129,16 +148,26 @@ export default function ChatPage() {
         { role: "assistant", content: `Error: ${err instanceof Error ? err.message : "Something went wrong"}` },
       ]);
     } finally {
+      abortRef.current = null;
       setSending(false);
       inputRef.current?.focus();
     }
   };
 
   const handleNewChat = (id: string | null) => {
+    // Abort in-flight stream — server continues via fire-and-forget
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    setSending(false);
+    setStreamingContent("");
+    setStatusText("");
     setRagEnabled(null);
     setToolsEnabled(null);
     setMessages([]);
     setConversationId(id);
+    if (!id) setSidebarRefresh((n) => n + 1); // refresh list on new chat
   };
 
   const effectiveRag = ragEnabled ?? (prefs.use_rag as boolean) ?? false;
