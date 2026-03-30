@@ -1083,16 +1083,17 @@ async def list_documents(user_id: str | None = Query(None)):
 
 @app.delete("/documents/{document_id}")
 async def delete_document(document_id: str, user_id: str | None = Query(None)):
+    # Check ownership in Postgres FIRST — only delete vectors if allowed.
+    if db.is_available():
+        deleted = await db.delete_document(document_id, user_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Document not found")
+
     if vector_store.is_available():
         try:
             vector_store.delete_by_document(document_id)
         except Exception as e:
             logger.warning("Failed to delete vectors from Qdrant: %s", e)
-
-    if db.is_available():
-        deleted = await db.delete_document(document_id, user_id)
-        if not deleted:
-            raise HTTPException(status_code=404, detail="Document not found")
 
     return {"status": "deleted"}
 

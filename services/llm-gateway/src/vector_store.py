@@ -85,18 +85,18 @@ def search(
     if not _client:
         raise RuntimeError("Qdrant not initialized")
 
-    from qdrant_client.models import Filter, FieldCondition, MatchValue
+    from qdrant_client.models import Filter, FieldCondition, IsNullCondition, MatchValue, PayloadField
 
-    # Build a filter: shared docs OR user's own private docs.
-    # Chunks ingested before this feature have no is_private field —
-    # Qdrant treats missing-field conditions as non-matching, so they
-    # pass through the "is_private == false" clause automatically.
+    # Build a filter: shared docs OR user's own docs OR pre-migration docs.
+    # Pre-existing chunks (before migration 010) have no is_private field,
+    # so we include an IsNullCondition to keep them visible.
     query_filter = None
     if user_id:
         query_filter = Filter(
             should=[
                 FieldCondition(key="is_private", match=MatchValue(value=False)),
                 FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+                IsNullCondition(is_null=PayloadField(key="is_private")),
             ],
         )
 
