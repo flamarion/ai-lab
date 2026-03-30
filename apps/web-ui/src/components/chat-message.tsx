@@ -1,7 +1,7 @@
 "use client";
 
 import { type ToolUsed } from "@/lib/api";
-import { Wrench, ChevronDown, ChevronUp, Copy, Check } from "lucide-react";
+import { Wrench, ListChecks, ChevronDown, ChevronUp, Copy, Check } from "lucide-react";
 import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
@@ -11,6 +11,7 @@ interface Props {
   role: "user" | "assistant";
   content: string;
   toolsUsed?: ToolUsed[];
+  plan?: string;
   statusText?: string;
   isStreaming?: boolean;
 }
@@ -55,8 +56,9 @@ function CodeBlock({ className, children }: { className?: string; children: Reac
   );
 }
 
-export default function ChatMessage({ role, content, toolsUsed, isStreaming, statusText }: Props) {
+export default function ChatMessage({ role, content, toolsUsed, plan, isStreaming, statusText }: Props) {
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
 
   return (
     <div className={`animate-fade-in ${role === "user" ? "flex justify-end" : ""}`}>
@@ -67,6 +69,25 @@ export default function ChatMessage({ role, content, toolsUsed, isStreaming, sta
             : "py-3"
         }`}
       >
+        {/* Agent plan indicator */}
+        {plan && (
+          <div className="mb-3">
+            <button
+              onClick={() => setPlanOpen(!planOpen)}
+              className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
+            >
+              <ListChecks size={12} />
+              Plan
+              {planOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            </button>
+            {planOpen && (
+              <div className="mt-2 animate-fade-in bg-[var(--color-bg-tertiary)] rounded-lg p-3 text-xs border border-[var(--color-border)]">
+                <pre className="text-[var(--color-text-secondary)] whitespace-pre-wrap font-[var(--font-mono)]">{plan}</pre>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Tool usage indicator */}
         {toolsUsed && toolsUsed.length > 0 && (
           <div className="mb-3">

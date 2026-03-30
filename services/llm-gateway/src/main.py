@@ -970,6 +970,7 @@ async def chat_stream(request: ChatRequest):
             tools_used = []
             response_text = ""
 
+            plan = None
             if orchestrated and subtasks:
                 # Multi-agent orchestration: execute each subtask reliably
                 for i, st in enumerate(subtasks):
@@ -993,7 +994,7 @@ async def chat_stream(request: ChatRequest):
 
             elif request.use_tools:
                 await _put("status", {"status": "thinking", "detail": f"Asking {model}..."})
-                # Single-agent tool loop (existing flow)
+                # Single-agent tool loop
                 async for event in client.chat_with_tools_stream(
                     model=model, messages=messages, options=options,
                     user_id=request.user_id,
@@ -1006,6 +1007,7 @@ async def chat_stream(request: ChatRequest):
                         await _put("token", {"text": event["text"]})
                     elif event["type"] == "done":
                         tools_used = event["tools_used"]
+                        plan = event.get("plan")
                 if tools_used:
                     logger.info("Tools used: %s", [t["name"] for t in tools_used])
             else:
@@ -1023,7 +1025,7 @@ async def chat_stream(request: ChatRequest):
             await _persist_turn(request, conversation_id, model, response_text, is_new, messages)
 
             # Send final result
-            await _put("done", {"response": response_text, "model": model, "conversation_id": conversation_id, "tools_used": tools_used})
+            await _put("done", {"response": response_text, "model": model, "conversation_id": conversation_id, "tools_used": tools_used, "plan": plan})
 
         except Exception as e:
             await _put("error", {"detail": str(e)})
