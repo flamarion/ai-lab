@@ -7,7 +7,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 import bcrypt
-from fastapi import FastAPI, HTTPException, Query, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
@@ -835,13 +835,13 @@ async def _get_is_child(user_id: str | None) -> bool:
         return False
 
 
-async def _retrieve_rag_context(message: str) -> str | None:
+async def _retrieve_rag_context(message: str, user_id: str | None = None) -> str | None:
     """Embed the query and search Qdrant for relevant chunks."""
     if not vector_store.is_available():
         return None
     query_text = f"search_query: {message}"
     query_vectors = await client.embed([query_text])
-    results = vector_store.search(query_vectors[0], limit=5)
+    results = vector_store.search(query_vectors[0], limit=5, user_id=user_id)
     if results:
         parts = [f"[{r.get('source', 'unknown')}]\n{r['text']}" for r in results]
         return _RAG_SYSTEM_PROMPT.format(context="\n---\n".join(parts))
@@ -877,26 +877,44 @@ def _maybe_extract_memories(
 
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """Streaming chat endpoint — sends SSE events with status updates."""
+    """Streaming chat endpoint — sends SSE events with status updates.
+
+    Generation runs as an independent asyncio.Task so it completes and
+    persists to the database even if the client disconnects mid-stream
+    (fire-and-forget).  The SSE generator is a thin consumer that reads
+    from a shared queue; dropping the connection does *not* cancel the
+    generation task.
+    """
     import json as _json
     from starlette.responses import StreamingResponse
 
     is_child = await _get_is_child(request.user_id)
+    queue: asyncio.Queue = asyncio.Queue()
+    disconnected = asyncio.Event()
 
-    async def _generate():
+    async def _run_generation():
+        """Produce events onto *queue*. Runs as a background task."""
+        async def _put(event: str, data: dict):
+            # Skip status/token events when consumer is gone to avoid
+            # unbounded queue growth.  Always enqueue done/error so
+            # _persist_turn results are not lost.
+            if disconnected.is_set() and event in ("status", "token"):
+                return
+            await queue.put({"event": event, "data": data})
+
         try:
             model = _select_model(request)
             conversation_id = request.conversation_id or str(uuid.uuid4())
             messages = await _load_messages(request, conversation_id)
 
             # RAG
-            yield f"event: status\ndata: {_json.dumps({'status': 'preparing', 'detail': 'Building context...'})}\n\n"
+            await _put("status", {"status": "preparing", "detail": "Building context..."})
 
             rag_context = None
             if request.use_rag:
                 try:
-                    yield f"event: status\ndata: {_json.dumps({'status': 'rag', 'detail': 'Searching documents...'})}\n\n"
-                    rag_context = await _retrieve_rag_context(request.message)
+                    await _put("status", {"status": "rag", "detail": "Searching documents..."})
+                    rag_context = await _retrieve_rag_context(request.message, request.user_id)
                 except Exception:
                     pass
 
@@ -914,7 +932,7 @@ async def chat_stream(request: ChatRequest):
 
             # Summarize if needed
             if context.should_summarize(messages):
-                yield f"event: status\ndata: {_json.dumps({'status': 'summarizing', 'detail': 'Compressing conversation history...'})}\n\n"
+                await _put("status", {"status": "summarizing", "detail": "Compressing conversation history..."})
                 messages = await context.summarize_conversation(messages, client, model)
 
             options = _build_options(request)
@@ -924,18 +942,16 @@ async def chat_stream(request: ChatRequest):
             if request.use_tools:
                 selected_agent = agent_registry.route(request.message)
                 if selected_agent:
-                    yield f"event: status\ndata: {_json.dumps({'status': 'agent', 'detail': f'Using {selected_agent.name} agent'})}\n\n"
-                    # Prepend agent system prompt
+                    await _put("status", {"status": "agent", "detail": f"Using {selected_agent.name} agent"})
                     agent_prompt = f"## Agent: {selected_agent.name}\n{selected_agent.system_prompt}"
                     if messages and messages[0].get("role") == "system":
                         messages[0]["content"] = agent_prompt + "\n\n" + messages[0]["content"]
                     else:
                         messages.insert(0, {"role": "system", "content": agent_prompt})
-                    # Override model if the agent specifies one
                     if selected_agent.model:
                         model = selected_agent.model
 
-            yield f"event: status\ndata: {_json.dumps({'status': 'thinking', 'detail': f'Asking {model}...'})}\n\n"
+            await _put("status", {"status": "thinking", "detail": f"Asking {model}..."})
 
             tools_used = []
             response_text = ""
@@ -947,10 +963,10 @@ async def chat_stream(request: ChatRequest):
                     user_id=request.user_id,
                 ):
                     if event["type"] == "status":
-                        yield f"event: status\ndata: {_json.dumps({'status': event['status'], 'detail': event['detail']})}\n\n"
+                        await _put("status", {"status": event["status"], "detail": event["detail"]})
                     elif event["type"] == "token":
                         response_text += event["text"]
-                        yield f"event: token\ndata: {_json.dumps({'text': event['text']})}\n\n"
+                        await _put("token", {"text": event["text"]})
                     elif event["type"] == "done":
                         tools_used = event["tools_used"]
                 if tools_used:
@@ -961,7 +977,7 @@ async def chat_stream(request: ChatRequest):
                     model=model, messages=messages, options=options,
                 ):
                     response_text += token
-                    yield f"event: token\ndata: {_json.dumps({'text': token})}\n\n"
+                    await _put("token", {"text": token})
 
             # Record trace for Weave (streaming methods aren't directly traced)
             await client._trace_streaming_chat(model, messages, options, response_text)
@@ -970,12 +986,29 @@ async def chat_stream(request: ChatRequest):
             await _persist_turn(request, conversation_id, model, response_text, is_new, messages)
 
             # Send final result
-            yield f"event: done\ndata: {_json.dumps({'response': response_text, 'model': model, 'conversation_id': conversation_id, 'tools_used': tools_used})}\n\n"
+            await _put("done", {"response": response_text, "model": model, "conversation_id": conversation_id, "tools_used": tools_used})
 
         except Exception as e:
-            yield f"event: error\ndata: {_json.dumps({'detail': str(e)})}\n\n"
+            await _put("error", {"detail": str(e)})
+        finally:
+            await queue.put(None)  # sentinel — signals consumer to stop
 
-    return StreamingResponse(_generate(), media_type="text/event-stream")
+    # Launch generation as an independent task (survives client disconnect)
+    asyncio.create_task(_run_generation())
+
+    async def _sse_consumer():
+        """Yield SSE-formatted strings from the queue. If the client
+        disconnects (GeneratorExit), the generation task keeps running."""
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield f"event: {event['event']}\ndata: {_json.dumps(event['data'])}\n\n"
+        except (asyncio.CancelledError, GeneratorExit):
+            disconnected.set()  # tell _run_generation to stop queuing
+
+    return StreamingResponse(_sse_consumer(), media_type="text/event-stream")
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -988,7 +1021,7 @@ async def chat(request: ChatRequest):
     rag_context = None
     if request.use_rag:
         try:
-            rag_context = await _retrieve_rag_context(request.message)
+            rag_context = await _retrieve_rag_context(request.message, request.user_id)
             if rag_context:
                 logger.info("RAG: injected context into prompt")
         except Exception as e:
@@ -1078,7 +1111,11 @@ async def _generate_title(
 
 
 @app.post("/ingest")
-async def ingest_file(file: UploadFile):
+async def ingest_file(
+    file: UploadFile,
+    user_id: str | None = Form(None),
+    is_private: bool = Form(False),
+):
     """Upload a document, chunk it, embed chunks, and store in Qdrant."""
     if not vector_store.is_available():
         raise HTTPException(status_code=503, detail="Vector store not available")
@@ -1107,43 +1144,45 @@ async def ingest_file(file: UploadFile):
     document_id = None
     if db.is_available():
         try:
-            document_id = await db.add_document(filename, len(chunks))
+            document_id = await db.add_document(filename, len(chunks), user_id, is_private)
         except Exception as e:
             logger.warning("Failed to record document in DB: %s", e)
 
     if not document_id:
         document_id = str(uuid.uuid4())
 
-    vector_store.upsert_chunks(chunks, vectors, document_id, filename)
+    vector_store.upsert_chunks(chunks, vectors, document_id, filename, user_id, is_private)
 
-    logger.info("Ingested %s: %d chunks, doc_id=%s", filename, len(chunks), document_id[:8])
+    logger.info("Ingested %s: %d chunks, doc_id=%s, private=%s", filename, len(chunks), document_id[:8], is_private)
     return {
         "document_id": document_id,
         "source": filename,
         "num_chunks": len(chunks),
+        "is_private": is_private,
     }
 
 
 @app.get("/documents")
-async def list_documents():
+async def list_documents(user_id: str | None = Query(None)):
     if not db.is_available():
         raise HTTPException(status_code=503, detail="Database not available")
-    documents = await db.list_documents()
+    documents = await db.list_documents(user_id=user_id)
     return {"documents": documents}
 
 
 @app.delete("/documents/{document_id}")
-async def delete_document(document_id: str):
+async def delete_document(document_id: str, user_id: str | None = Query(None)):
+    # Check ownership in Postgres FIRST — only delete vectors if allowed.
+    if db.is_available():
+        deleted = await db.delete_document(document_id, user_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Document not found")
+
     if vector_store.is_available():
         try:
             vector_store.delete_by_document(document_id)
         except Exception as e:
             logger.warning("Failed to delete vectors from Qdrant: %s", e)
-
-    if db.is_available():
-        deleted = await db.delete_document(document_id)
-        if not deleted:
-            raise HTTPException(status_code=404, detail="Document not found")
 
     return {"status": "deleted"}
 
