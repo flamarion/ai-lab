@@ -185,51 +185,78 @@ async def delete_conversation(conversation_id: str) -> bool:
 # --- Documents (RAG) ---
 
 
-async def add_document(source: str, num_chunks: int) -> str:
+async def add_document(
+    source: str, num_chunks: int, user_id: str | None = None, is_private: bool = False,
+) -> str:
     """Insert a document record and return its ID."""
     pool = _pool_or_raise()
     row = await pool.fetchrow(
         """
-        INSERT INTO documents (source, num_chunks)
-        VALUES ($1, $2)
+        INSERT INTO documents (source, num_chunks, user_id, is_private)
+        VALUES ($1, $2, $3, $4)
         RETURNING id
         """,
         source,
         num_chunks,
+        uuid.UUID(user_id) if user_id else None,
+        is_private,
     )
     return str(row["id"])
 
 
-async def list_documents(limit: int = 50) -> list[dict]:
-    """Return ingested documents ordered by creation date."""
+async def list_documents(limit: int = 50, user_id: str | None = None) -> list[dict]:
+    """Return documents the user can see: shared docs + their own private docs."""
     pool = _pool_or_raise()
-    rows = await pool.fetch(
-        """
-        SELECT id, source, num_chunks, created_at
-        FROM documents
-        ORDER BY created_at DESC
-        LIMIT $1
-        """,
-        limit,
-    )
+    if user_id:
+        rows = await pool.fetch(
+            """
+            SELECT id, source, num_chunks, created_at, user_id, is_private
+            FROM documents
+            WHERE is_private = false OR user_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            uuid.UUID(user_id),
+            limit,
+        )
+    else:
+        rows = await pool.fetch(
+            """
+            SELECT id, source, num_chunks, created_at, user_id, is_private
+            FROM documents
+            WHERE is_private = false
+            ORDER BY created_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
     return [
         {
             "id": str(r["id"]),
             "source": r["source"],
             "num_chunks": r["num_chunks"],
             "created_at": r["created_at"].isoformat(),
+            "user_id": str(r["user_id"]) if r["user_id"] else None,
+            "is_private": r["is_private"],
         }
         for r in rows
     ]
 
 
-async def delete_document(document_id: str) -> bool:
-    """Delete a document record. Returns True if it existed."""
+async def delete_document(document_id: str, user_id: str | None = None) -> bool:
+    """Delete a document record. Non-admin users can only delete their own."""
     pool = _pool_or_raise()
-    result = await pool.execute(
-        "DELETE FROM documents WHERE id = $1",
-        uuid.UUID(document_id),
-    )
+    if user_id:
+        result = await pool.execute(
+            "DELETE FROM documents WHERE id = $1 AND (user_id = $2 OR user_id IS NULL)",
+            uuid.UUID(document_id),
+            uuid.UUID(user_id),
+        )
+    else:
+        result = await pool.execute(
+            "DELETE FROM documents WHERE id = $1",
+            uuid.UUID(document_id),
+        )
     return result == "DELETE 1"
 
 

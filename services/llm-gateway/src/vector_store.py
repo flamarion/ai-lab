@@ -47,6 +47,8 @@ def upsert_chunks(
     vectors: list[list[float]],
     document_id: str,
     source: str,
+    user_id: str | None = None,
+    is_private: bool = False,
 ) -> None:
     """Store chunk vectors with metadata in Qdrant."""
     if not _client:
@@ -61,6 +63,8 @@ def upsert_chunks(
                 "document_id": document_id,
                 "source": source,
                 "chunk_index": chunk["chunk_index"],
+                "user_id": user_id or "",
+                "is_private": is_private,
             },
         )
         for chunk, vector in zip(chunks, vectors)
@@ -69,15 +73,38 @@ def upsert_chunks(
     _client.upsert(collection_name=settings.QDRANT_COLLECTION, points=points)
 
 
-def search(query_vector: list[float], limit: int = 5) -> list[dict]:
-    """Search for similar chunks. Returns list of payloads with scores."""
+def search(
+    query_vector: list[float], limit: int = 5, user_id: str | None = None,
+) -> list[dict]:
+    """Search for similar chunks visible to the user.
+
+    Returns shared documents (is_private=false or missing) plus the user's
+    own private documents.  Pre-existing chunks without is_private are
+    treated as shared.
+    """
     if not _client:
         raise RuntimeError("Qdrant not initialized")
+
+    from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+    # Build a filter: shared docs OR user's own private docs.
+    # Chunks ingested before this feature have no is_private field —
+    # Qdrant treats missing-field conditions as non-matching, so they
+    # pass through the "is_private == false" clause automatically.
+    query_filter = None
+    if user_id:
+        query_filter = Filter(
+            should=[
+                FieldCondition(key="is_private", match=MatchValue(value=False)),
+                FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+            ],
+        )
 
     results = _client.query_points(
         collection_name=settings.QDRANT_COLLECTION,
         query=query_vector,
         limit=limit,
+        query_filter=query_filter,
     )
 
     return [

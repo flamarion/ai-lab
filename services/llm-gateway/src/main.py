@@ -7,7 +7,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 import bcrypt
-from fastapi import FastAPI, HTTPException, Query, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
@@ -780,13 +780,13 @@ async def _get_is_child(user_id: str | None) -> bool:
         return False
 
 
-async def _retrieve_rag_context(message: str) -> str | None:
+async def _retrieve_rag_context(message: str, user_id: str | None = None) -> str | None:
     """Embed the query and search Qdrant for relevant chunks."""
     if not vector_store.is_available():
         return None
     query_text = f"search_query: {message}"
     query_vectors = await client.embed([query_text])
-    results = vector_store.search(query_vectors[0], limit=5)
+    results = vector_store.search(query_vectors[0], limit=5, user_id=user_id)
     if results:
         parts = [f"[{r.get('source', 'unknown')}]\n{r['text']}" for r in results]
         return _RAG_SYSTEM_PROMPT.format(context="\n---\n".join(parts))
@@ -853,7 +853,7 @@ async def chat_stream(request: ChatRequest):
             if request.use_rag:
                 try:
                     await _put("status", {"status": "rag", "detail": "Searching documents..."})
-                    rag_context = await _retrieve_rag_context(request.message)
+                    rag_context = await _retrieve_rag_context(request.message, request.user_id)
                 except Exception:
                     pass
 
@@ -946,7 +946,7 @@ async def chat(request: ChatRequest):
     rag_context = None
     if request.use_rag:
         try:
-            rag_context = await _retrieve_rag_context(request.message)
+            rag_context = await _retrieve_rag_context(request.message, request.user_id)
             if rag_context:
                 logger.info("RAG: injected context into prompt")
         except Exception as e:
@@ -1022,7 +1022,11 @@ async def _generate_title(
 
 
 @app.post("/ingest")
-async def ingest_file(file: UploadFile):
+async def ingest_file(
+    file: UploadFile,
+    user_id: str | None = Form(None),
+    is_private: bool = Form(False),
+):
     """Upload a document, chunk it, embed chunks, and store in Qdrant."""
     if not vector_store.is_available():
         raise HTTPException(status_code=503, detail="Vector store not available")
@@ -1051,33 +1055,34 @@ async def ingest_file(file: UploadFile):
     document_id = None
     if db.is_available():
         try:
-            document_id = await db.add_document(filename, len(chunks))
+            document_id = await db.add_document(filename, len(chunks), user_id, is_private)
         except Exception as e:
             logger.warning("Failed to record document in DB: %s", e)
 
     if not document_id:
         document_id = str(uuid.uuid4())
 
-    vector_store.upsert_chunks(chunks, vectors, document_id, filename)
+    vector_store.upsert_chunks(chunks, vectors, document_id, filename, user_id, is_private)
 
-    logger.info("Ingested %s: %d chunks, doc_id=%s", filename, len(chunks), document_id[:8])
+    logger.info("Ingested %s: %d chunks, doc_id=%s, private=%s", filename, len(chunks), document_id[:8], is_private)
     return {
         "document_id": document_id,
         "source": filename,
         "num_chunks": len(chunks),
+        "is_private": is_private,
     }
 
 
 @app.get("/documents")
-async def list_documents():
+async def list_documents(user_id: str | None = Query(None)):
     if not db.is_available():
         raise HTTPException(status_code=503, detail="Database not available")
-    documents = await db.list_documents()
+    documents = await db.list_documents(user_id=user_id)
     return {"documents": documents}
 
 
 @app.delete("/documents/{document_id}")
-async def delete_document(document_id: str):
+async def delete_document(document_id: str, user_id: str | None = Query(None)):
     if vector_store.is_available():
         try:
             vector_store.delete_by_document(document_id)
@@ -1085,7 +1090,7 @@ async def delete_document(document_id: str):
             logger.warning("Failed to delete vectors from Qdrant: %s", e)
 
     if db.is_available():
-        deleted = await db.delete_document(document_id)
+        deleted = await db.delete_document(document_id, user_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Document not found")
 
