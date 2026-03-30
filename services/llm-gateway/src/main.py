@@ -822,25 +822,37 @@ def _maybe_extract_memories(
 
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """Streaming chat endpoint — sends SSE events with status updates."""
+    """Streaming chat endpoint — sends SSE events with status updates.
+
+    Generation runs as an independent asyncio.Task so it completes and
+    persists to the database even if the client disconnects mid-stream
+    (fire-and-forget).  The SSE generator is a thin consumer that reads
+    from a shared queue; dropping the connection does *not* cancel the
+    generation task.
+    """
     import json as _json
     from starlette.responses import StreamingResponse
 
     is_child = await _get_is_child(request.user_id)
+    queue: asyncio.Queue = asyncio.Queue()
 
-    async def _generate():
+    async def _run_generation():
+        """Produce events onto *queue*. Runs as a background task."""
+        async def _put(event: str, data: dict):
+            await queue.put({"event": event, "data": data})
+
         try:
             model = _select_model(request)
             conversation_id = request.conversation_id or str(uuid.uuid4())
             messages = await _load_messages(request, conversation_id)
 
             # RAG
-            yield f"event: status\ndata: {_json.dumps({'status': 'preparing', 'detail': 'Building context...'})}\n\n"
+            await _put("status", {"status": "preparing", "detail": "Building context..."})
 
             rag_context = None
             if request.use_rag:
                 try:
-                    yield f"event: status\ndata: {_json.dumps({'status': 'rag', 'detail': 'Searching documents...'})}\n\n"
+                    await _put("status", {"status": "rag", "detail": "Searching documents..."})
                     rag_context = await _retrieve_rag_context(request.message)
                 except Exception:
                     pass
@@ -859,12 +871,12 @@ async def chat_stream(request: ChatRequest):
 
             # Summarize if needed
             if context.should_summarize(messages):
-                yield f"event: status\ndata: {_json.dumps({'status': 'summarizing', 'detail': 'Compressing conversation history...'})}\n\n"
+                await _put("status", {"status": "summarizing", "detail": "Compressing conversation history..."})
                 messages = await context.summarize_conversation(messages, client, model)
 
             options = _build_options(request)
 
-            yield f"event: status\ndata: {_json.dumps({'status': 'thinking', 'detail': f'Asking {model}...'})}\n\n"
+            await _put("status", {"status": "thinking", "detail": f"Asking {model}..."})
 
             tools_used = []
             response_text = ""
@@ -876,10 +888,10 @@ async def chat_stream(request: ChatRequest):
                     user_id=request.user_id,
                 ):
                     if event["type"] == "status":
-                        yield f"event: status\ndata: {_json.dumps({'status': event['status'], 'detail': event['detail']})}\n\n"
+                        await _put("status", {"status": event["status"], "detail": event["detail"]})
                     elif event["type"] == "token":
                         response_text += event["text"]
-                        yield f"event: token\ndata: {_json.dumps({'text': event['text']})}\n\n"
+                        await _put("token", {"text": event["text"]})
                     elif event["type"] == "done":
                         tools_used = event["tools_used"]
                 if tools_used:
@@ -890,7 +902,7 @@ async def chat_stream(request: ChatRequest):
                     model=model, messages=messages, options=options,
                 ):
                     response_text += token
-                    yield f"event: token\ndata: {_json.dumps({'text': token})}\n\n"
+                    await _put("token", {"text": token})
 
             # Record trace for Weave (streaming methods aren't directly traced)
             await client._trace_streaming_chat(model, messages, options, response_text)
@@ -899,12 +911,29 @@ async def chat_stream(request: ChatRequest):
             await _persist_turn(request, conversation_id, model, response_text, is_new, messages)
 
             # Send final result
-            yield f"event: done\ndata: {_json.dumps({'response': response_text, 'model': model, 'conversation_id': conversation_id, 'tools_used': tools_used})}\n\n"
+            await _put("done", {"response": response_text, "model": model, "conversation_id": conversation_id, "tools_used": tools_used})
 
         except Exception as e:
-            yield f"event: error\ndata: {_json.dumps({'detail': str(e)})}\n\n"
+            await _put("error", {"detail": str(e)})
+        finally:
+            await queue.put(None)  # sentinel — signals consumer to stop
 
-    return StreamingResponse(_generate(), media_type="text/event-stream")
+    # Launch generation as an independent task (survives client disconnect)
+    asyncio.create_task(_run_generation())
+
+    async def _sse_consumer():
+        """Yield SSE-formatted strings from the queue. If the client
+        disconnects (GeneratorExit), the generation task keeps running."""
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield f"event: {event['event']}\ndata: {_json.dumps(event['data'])}\n\n"
+        except (asyncio.CancelledError, GeneratorExit):
+            pass  # generation task continues in background
+
+    return StreamingResponse(_sse_consumer(), media_type="text/event-stream")
 
 
 @app.post("/chat", response_model=ChatResponse)
