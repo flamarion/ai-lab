@@ -6,17 +6,8 @@ import ChatSidebar from "@/components/chat-sidebar";
 import ChatMessageComponent from "@/components/chat-message";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Menu, Send, Zap, BookOpen, Paperclip, X, FileText, FileSpreadsheet, FileCode, FileJson } from "lucide-react";
-
-/** Pick a file icon based on extension. */
-function FileAttachmentIcon({ name, size = 14 }: { name: string; size?: number }) {
-  const ext = name.split(".").pop()?.toLowerCase() || "";
-  if (ext === "csv") return <FileSpreadsheet size={size} className="text-green-500 shrink-0" />;
-  if (ext === "json") return <FileJson size={size} className="text-yellow-500 shrink-0" />;
-  if (["py", "js", "ts", "go", "rs", "java", "sh", "sql", "html", "css"].includes(ext))
-    return <FileCode size={size} className="text-blue-500 shrink-0" />;
-  return <FileText size={size} className="text-[var(--color-text-muted)] shrink-0" />;
-}
+import { Menu, Send, Zap, BookOpen, Paperclip, X } from "lucide-react";
+import FileIcon from "@/components/file-icon";
 
 /** File types accepted for text extraction. */
 const TEXT_ACCEPT = ".csv,.json,.txt,.md,.xml,.yaml,.yml,.py,.js,.ts,.html,.css,.sql,.sh,.go,.rs,.java,.toml,.ini,.cfg,.log,.env";
@@ -117,19 +108,38 @@ export default function ChatPage() {
       reader.readAsText(file);
     });
 
+  const MAX_TEXT_FILE_SIZE = 512 * 1024; // 512 KB per text file
+  const ALLOWED_TEXT_EXTENSIONS = new Set(TEXT_ACCEPT.split(",").map((e) => e.replace(".", "")));
+
+  const isAllowedTextFile = (file: File): boolean => {
+    const ext = file.name.split(".").pop()?.toLowerCase() || "";
+    return ALLOWED_TEXT_EXTENSIONS.has(ext);
+  };
+
   const addFiles = async (files: FileList | File[]) => {
     const items = Array.from(files);
-    // Split into images and text files
     const imageFiles = items.filter((f) => f.type.startsWith("image/"));
-    const textFiles = items.filter((f) => !f.type.startsWith("image/"));
+    const textFiles = items.filter((f) => !f.type.startsWith("image/") && isAllowedTextFile(f));
+    const rejected = items.filter((f) => !f.type.startsWith("image/") && !isAllowedTextFile(f));
+
+    if (rejected.length > 0) {
+      console.warn("Rejected unsupported files:", rejected.map((f) => f.name));
+    }
 
     if (imageFiles.length > 0) {
       const dataUrls = await Promise.all(imageFiles.map(readFileAsDataUrl));
       setPendingImages((prev) => [...prev, ...dataUrls]);
     }
     if (textFiles.length > 0) {
+      const validFiles = textFiles.filter((f) => {
+        if (f.size > MAX_TEXT_FILE_SIZE) {
+          console.warn(`File too large (${(f.size / 1024).toFixed(0)} KB), max 512 KB: ${f.name}`);
+          return false;
+        }
+        return true;
+      });
       const attachments: FileAttachment[] = await Promise.all(
-        textFiles.map(async (f) => ({
+        validFiles.map(async (f) => ({
           name: f.name,
           type: f.type || "text/plain",
           size: f.size,
@@ -411,7 +421,7 @@ export default function ChatPage() {
                 ))}
                 {pendingFiles.map((f, i) => (
                   <div key={`file-${i}`} className="relative group flex items-center gap-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5">
-                    <FileAttachmentIcon name={f.name} size={14} />
+                    <FileIcon name={f.name} size={14} />
                     <span className="text-xs text-[var(--color-text-secondary)] max-w-32 truncate">{f.name}</span>
                     <button
                       onClick={() => setPendingFiles((prev) => prev.filter((_, j) => j !== i))}

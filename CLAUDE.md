@@ -189,8 +189,10 @@ Current migrations:
 - `007_secrets.sql` — secrets table (key-value store for MCP credentials)
 - `008_mcp_config.sql` — mcp_config table (persists MCP server config across container restarts)
 - `009_user_memory.sql` — user_memory table (per-user persistent memory for cross-conversation context)
+- `010_documents_user.sql` — user_id + is_private columns on documents (per-user document scoping)
 - `010_message_images.sql` — images text[] column on messages (base64-encoded attachments for vision)
-- `011_message_attachments.sql` — attachments jsonb column on messages (file metadata: name, type, size)
+- `011_agents.sql` — agents table (DB-configurable specialized agent registry)
+- `012_message_attachments.sql` — attachments jsonb column on messages (file metadata: name, type, size)
 
 Two compose files, one per VM:
 - `infra/docker/docker-compose.yml` — ai-app VM (nginx + gateway + chat UI + SearXNG)
@@ -308,7 +310,7 @@ Built-in tools: `calculator`, `current_time`, `unit_convert`, `save_memory`, `we
 - **asyncpg JSONB codec**: `db.py` registers `json.dumps`/`json.loads` codecs on every pool connection via `init=_init_connection`. This makes JSONB columns round-trip as Python dicts automatically. Without it, asyncpg returns raw JSON strings which FastAPI double-encodes. Pass dicts directly to asyncpg (no `json.dumps` needed), and don't use `::jsonb` casts.
 - **Child safety**: Users flagged `is_child` in the admin panel get `CHILD_SAFETY_PROMPT` injected into every system prompt (via `context.build_system_prompt`). The `is_child` flag is returned in login/session responses and looked up per-chat via `_get_is_child()`.
 - **Chat endpoint helpers**: Shared logic between `/chat` and `/chat/stream` is extracted into helpers: `_get_is_child()`, `_retrieve_rag_context()`, `_build_options()`, `_build_user_message()`, `_effective_use_tools()`, `_maybe_extract_memories()`. Never duplicate code between these endpoints — add a helper instead.
-- **File attachments**: Text files (CSV, JSON, txt, code) are read client-side and sent as `attachments` in the chat request. The gateway's `_build_user_message()` injects file content into the prompt as fenced code blocks. Only metadata (name, type, size) is persisted in the DB — the content lives in the message text. Images use the separate `images` field for Ollama vision.
+- **File attachments**: Text files (CSV, JSON, txt, code) are read client-side and sent as `attachments` in the chat request. The gateway's `_build_user_message()` injects file content into the prompt as fenced code blocks. The full injected content (message + file blocks) is persisted in the DB so it survives conversation reload. Attachment metadata (name, type, size) is stored separately in the `attachments` JSONB column for UI display. Images use the separate `images` field for Ollama vision.
 - **Settings form architecture**: `SettingsPage` returns null until auth loads, then renders `<SettingsForm key={user.user_id}>`. This ensures `useState` initializes with DB preferences, not defaults. The `key` prop forces remount on user switch.
 
 ## Ollama Server Tuning

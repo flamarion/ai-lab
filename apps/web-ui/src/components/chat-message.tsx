@@ -1,7 +1,8 @@
 "use client";
 
 import { type ToolUsed, type FileAttachment } from "@/lib/api";
-import { Wrench, ListChecks, ChevronDown, ChevronUp, Copy, Check, FileText, FileSpreadsheet, FileCode, FileJson } from "lucide-react";
+import { Wrench, ListChecks, ChevronDown, ChevronUp, Copy, Check } from "lucide-react";
+import FileIcon from "@/components/file-icon";
 import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
@@ -16,15 +17,6 @@ interface Props {
   plan?: string;
   statusText?: string;
   isStreaming?: boolean;
-}
-
-function AttachmentIcon({ name, size = 14 }: { name: string; size?: number }) {
-  const ext = name.split(".").pop()?.toLowerCase() || "";
-  if (ext === "csv") return <FileSpreadsheet size={size} className="text-green-500 shrink-0" />;
-  if (ext === "json") return <FileJson size={size} className="text-yellow-500 shrink-0" />;
-  if (["py", "js", "ts", "go", "rs", "java", "sh", "sql", "html", "css"].includes(ext))
-    return <FileCode size={size} className="text-blue-500 shrink-0" />;
-  return <FileText size={size} className="text-[var(--color-text-muted)] shrink-0" />;
 }
 
 function formatSize(bytes: number): string {
@@ -159,7 +151,7 @@ export default function ChatMessage({ role, content, images, attachments, toolsU
           <div className="flex gap-2 flex-wrap mb-2">
             {attachments.map((att, i) => (
               <div key={i} className="flex items-center gap-1.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5">
-                <AttachmentIcon name={att.name} size={14} />
+                <FileIcon name={att.name} size={14} />
                 <span className="text-xs text-[var(--color-text-secondary)] max-w-40 truncate">{att.name}</span>
                 {att.size > 0 && (
                   <span className="text-xs text-[var(--color-text-muted)]">{formatSize(att.size)}</span>

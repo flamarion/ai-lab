@@ -828,13 +828,22 @@ async def _persist_turn(
     try:
         title = request.message[:80] if is_new else ""
         await db.upsert_conversation(conversation_id, model, title, request.user_id)
-        # Store metadata only (name, type, size) — not the file content
-        att_meta = [
-            {"name": a["name"], "type": a.get("type", ""), "size": a.get("size", 0)}
-            for a in request.attachments
-        ] if request.attachments else None
+        # Build attachment metadata (name, type, size) — skip malformed entries
+        att_meta = None
+        if request.attachments:
+            att_meta_list: list[dict] = []
+            for a in request.attachments:
+                name = a.get("name") if isinstance(a, dict) else None
+                if not name:
+                    logger.warning("Skipping malformed attachment: %r", a)
+                    continue
+                att_meta_list.append({"name": name, "type": a.get("type", ""), "size": a.get("size", 0)})
+            att_meta = att_meta_list or None
+        # Persist the full user content (with injected file context) so
+        # it survives conversation reload via _load_messages().
+        user_content = _build_user_message(request)["content"]
         await db.add_message(
-            conversation_id, "user", request.message,
+            conversation_id, "user", user_content,
             images=request.images or None, attachments=att_meta,
         )
         await db.add_message(conversation_id, "assistant", response_text)
@@ -899,7 +908,11 @@ def _build_user_message(request: ChatRequest) -> dict:
             # Determine the code fence language hint
             ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
             lang = ext if ext in ("json", "csv", "xml", "yaml", "yml", "py", "js", "ts", "html", "css", "sql", "sh", "go", "rs", "java") else ""
-            file_blocks.append(f"**File: {name}** ({file_type})\n```{lang}\n{file_content}\n```")
+            # Dynamic fence: ensure the fence is longer than any backtick run in the content
+            max_run = max((len(m.group(0)) for m in re.finditer(r"`+", str(file_content))), default=0)
+            fence = "`" * max(max_run + 1, 3)
+            lang_hint = lang if len(fence) == 3 else ""
+            file_blocks.append(f"**File: {name}** ({file_type})\n{fence}{lang_hint}\n{file_content}\n{fence}")
         context_block = "\n\n".join(file_blocks)
         content = f"{context_block}\n\n{content}" if content else context_block
     msg: dict = {"role": "user", "content": content}
