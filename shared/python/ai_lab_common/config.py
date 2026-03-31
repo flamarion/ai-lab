@@ -7,6 +7,7 @@ class Settings:
     ROUTE_CODE_MODEL: str = os.getenv("ROUTE_CODE_MODEL", "qwen3.5:27b")
     ROUTE_DEFAULT_MODEL: str = os.getenv("ROUTE_DEFAULT_MODEL", "mistral:7b")
     ROUTE_TOOLS_MODEL: str = os.getenv("ROUTE_TOOLS_MODEL", "qwen3.5:27b")
+    ROUTE_VISION_MODEL: str = os.getenv("ROUTE_VISION_MODEL", "gemma3:12b")
     GATEWAY_HOST: str = os.getenv("GATEWAY_HOST", "0.0.0.0")
     GATEWAY_PORT: int = int(os.getenv("GATEWAY_PORT", "8000"))
     GATEWAY_URL: str = os.getenv("GATEWAY_URL", "http://localhost/api")

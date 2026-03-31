@@ -125,7 +125,7 @@ User → nginx (:80) → Next.js (web-ui:3000) → FastAPI (llm-gateway:8000) �
 - `GET /health` — health check (includes database + vector store status)
 - `GET /models` — list available Ollama models (embedding models filtered out)
 - `GET /tools` — list available tools (name + description)
-- `POST /chat` — chat completion (accepts model, message, temperature, top_p, num_predict, system_prompt, use_rag, use_tools, user_id, history, conversation_id). When `use_tools=True`, the gateway orchestrates tool calls and returns `tools_used` in the response.
+- `POST /chat` — chat completion (accepts model, message, temperature, top_p, num_predict, system_prompt, use_rag, use_tools, user_id, history, conversation_id, images). When `use_tools=True`, the gateway orchestrates tool calls and returns `tools_used` in the response. When `images` contains base64 strings, the gateway auto-routes to the vision model (gemma3:12b).
 - `POST /chat/stream` — streaming chat via SSE. Same params as `/chat` but returns real-time status events (`thinking`, `tool_call`, `tool_result`, `summarizing`) followed by a `done` event with the full response.
 
 **Auth:**
@@ -189,6 +189,7 @@ Current migrations:
 - `007_secrets.sql` — secrets table (key-value store for MCP credentials)
 - `008_mcp_config.sql` — mcp_config table (persists MCP server config across container restarts)
 - `009_user_memory.sql` — user_memory table (per-user persistent memory for cross-conversation context)
+- `010_message_images.sql` — images text[] column on messages (base64-encoded attachments for vision)
 
 Two compose files, one per VM:
 - `infra/docker/docker-compose.yml` — ai-app VM (nginx + gateway + chat UI + SearXNG)
@@ -302,7 +303,7 @@ Built-in tools: `calculator`, `current_time`, `unit_convert`, `save_memory`, `we
 - **Cross-VM communication**: Services discover each other via LAN IP:port in env vars (same pattern for Ollama and Postgres).
 - **Pass-through options**: The gateway validates and builds an Ollama options dict (temperature, top_p, num_predict); `OllamaClient.chat()` forwards it as-is. Adding a new Ollama option only requires a change to `ChatRequest` and the dict-building code — the client never changes.
 - **PIN-based auth**: Users register with username + 4-8 digit PIN (bcrypt hashed). First registered user is auto-admin. Per-user conversations — each user sees only their own. Admin panel for user management (reset PINs, toggle admin, delete users). Settings (model, temperature) persist per-user as JSONB in the users table.
-- **Smart model routing**: When "Auto" is selected (no explicit model in request), the gateway's `router.py` classifies the prompt via keyword matching and picks the best model. Code/technical prompts route to `ROUTE_CODE_MODEL` (qwen3.5:27b), everything else to `ROUTE_DEFAULT_MODEL` (mistral). When tools are enabled, auto-selected models are overridden to `ROUTE_TOOLS_MODEL` (qwen3.5:27b). The selected model and reason are logged for observability. Users can always override by picking a specific model in the dropdown.
+- **Smart model routing**: When "Auto" is selected (no explicit model in request), the gateway's `router.py` classifies the prompt via keyword matching and picks the best model. Code/technical prompts route to `ROUTE_CODE_MODEL` (qwen3.5:27b), everything else to `ROUTE_DEFAULT_MODEL` (mistral). When tools are enabled, auto-selected models are overridden to `ROUTE_TOOLS_MODEL` (qwen3.5:27b). When images are attached, the model is overridden to `ROUTE_VISION_MODEL` (gemma3:12b) — this takes priority over both user selection and tools, since vision requires a vision-capable model. The selected model and reason are logged for observability.
 - **asyncpg JSONB codec**: `db.py` registers `json.dumps`/`json.loads` codecs on every pool connection via `init=_init_connection`. This makes JSONB columns round-trip as Python dicts automatically. Without it, asyncpg returns raw JSON strings which FastAPI double-encodes. Pass dicts directly to asyncpg (no `json.dumps` needed), and don't use `::jsonb` casts.
 - **Child safety**: Users flagged `is_child` in the admin panel get `CHILD_SAFETY_PROMPT` injected into every system prompt (via `context.build_system_prompt`). The `is_child` flag is returned in login/session responses and looked up per-chat via `_get_is_child()`.
 - **Chat endpoint helpers**: Shared logic between `/chat` and `/chat/stream` is extracted into helpers: `_get_is_child()`, `_retrieve_rag_context()`, `_build_options()`, `_maybe_extract_memories()`. Never duplicate code between these endpoints — add a helper instead.
@@ -328,6 +329,20 @@ Environment="OLLAMA_NO_CLOUD=1"
 | `OLLAMA_NO_CLOUD` | `1` | Disables cloud/telemetry features. Fully local operation. |
 
 Note: `OLLAMA_CONTEXT_LENGTH` was removed — Ollama auto-detects 24GB VRAM and sets `default_num_ctx=32768` automatically.
+
+## Roadmap
+
+Phases 1-8 are complete. Remaining phases close the gap with Claude Chat / ChatGPT within homelab constraints:
+
+| Phase | Feature | Description |
+|-------|---------|-------------|
+| 9a | Vision input | Image uploads in chat → gemma3:12b vision. UI drag-drop/file picker, base64 encode, Ollama `images` field |
+| 9b | Generic file upload | CSV, JSON, images attached to conversation context (not RAG). Preview/summary injected into prompt |
+| 10 | Code execution sandbox | `run_code` local tool. Ephemeral Docker container, no network, resource limits, timeout |
+| 11 | Rich rendering / artifacts | Sandboxed iframe in chat UI for live HTML/React/chart rendering |
+
+### Vision-capable models
+gemma3:12b supports vision natively via Ollama. When an image is attached, the gateway should route to a vision-capable model. Ollama's `/api/chat` accepts an `images` field (base64 strings) in message objects — the OllamaClient passes messages as-is, so no client changes are needed.
 
 ## Tech Stack
 
