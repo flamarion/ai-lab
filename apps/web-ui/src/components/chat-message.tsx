@@ -57,6 +57,11 @@ function CodeBlock({ className, children }: { className?: string; children: Reac
   );
 }
 
+/** Build a displayable src for an image string. Data URLs pass through; raw base64 gets a prefix. */
+function toImageSrc(img: string): string {
+  return img.startsWith("data:") ? img : `data:image/jpeg;base64,${img}`;
+}
+
 export default function ChatMessage({ role, content, images, toolsUsed, plan, isStreaming, statusText }: Props) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
@@ -124,7 +129,7 @@ export default function ChatMessage({ role, content, images, toolsUsed, plan, is
             {images.map((img, i) => (
               <button key={i} onClick={() => setExpandedImage(img)} className="block">
                 <img
-                  src={`data:image/jpeg;base64,${img}`}
+                  src={toImageSrc(img)}
                   alt={`Attachment ${i + 1}`}
                   className="max-h-48 max-w-64 rounded-lg border border-[var(--color-border)] object-contain cursor-pointer hover:opacity-90 transition-opacity"
                 />
@@ -140,7 +145,7 @@ export default function ChatMessage({ role, content, images, toolsUsed, plan, is
             onClick={() => setExpandedImage(null)}
           >
             <img
-              src={`data:image/jpeg;base64,${expandedImage}`}
+              src={toImageSrc(expandedImage)}
               alt="Expanded view"
               className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
             />

@@ -78,12 +78,15 @@ export default function ChatPage() {
     e.target.style.height = Math.min(e.target.scrollHeight, 200) + "px";
   };
 
-  const readFileAsBase64 = (file: File): Promise<string> =>
+  const readFileAsDataUrl = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
-        // Strip the data:image/...;base64, prefix — Ollama expects raw base64
-        const result = (reader.result as string).split(",")[1];
+        const result = reader.result;
+        if (typeof result !== "string" || !result.includes(",")) {
+          reject(new Error("Unexpected FileReader result format"));
+          return;
+        }
         resolve(result);
       };
       reader.onerror = reject;
@@ -93,13 +96,15 @@ export default function ChatPage() {
   const addImages = async (files: FileList | File[]) => {
     const imageFiles = Array.from(files).filter((f) => f.type.startsWith("image/"));
     if (imageFiles.length === 0) return;
-    const base64Images = await Promise.all(imageFiles.map(readFileAsBase64));
-    setPendingImages((prev) => [...prev, ...base64Images]);
+    const dataUrls = await Promise.all(imageFiles.map(readFileAsDataUrl));
+    setPendingImages((prev) => [...prev, ...dataUrls]);
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
-    if (e.dataTransfer.files.length > 0) addImages(e.dataTransfer.files);
+    if (e.dataTransfer.files.length > 0) {
+      await addImages(e.dataTransfer.files).catch(console.error);
+    }
   };
 
   const prefs = (user?.preferences || {}) as Record<string, unknown>;
@@ -107,12 +112,14 @@ export default function ChatPage() {
   const handleSend = async () => {
     if ((!input.trim() && pendingImages.length === 0) || sending || !user) return;
     const msg = input.trim();
-    const images = pendingImages.length > 0 ? [...pendingImages] : undefined;
+    const imageDataUrls = pendingImages.length > 0 ? [...pendingImages] : undefined;
+    // Strip data URL prefix for the API — Ollama expects raw base64
+    const apiImages = imageDataUrls?.map((url) => url.split(",")[1]);
     setInput("");
     setPendingImages([]);
     if (inputRef.current) inputRef.current.style.height = "auto";
 
-    setMessages((prev) => [...prev, { role: "user", content: msg, images }]);
+    setMessages((prev) => [...prev, { role: "user", content: msg, images: imageDataUrls }]);
     setSending(true);
 
     // Create an AbortController so navigating away can disconnect the
@@ -141,7 +148,7 @@ export default function ChatPage() {
         user_id: user.user_id,
         conversation_id: conversationId || undefined,
         history: conversationId ? undefined : messages.map((m) => ({ role: m.role, content: m.content })),
-        images,
+        images: apiImages,
       };
 
       setStreamingContent("");
@@ -342,7 +349,7 @@ export default function ChatPage() {
                 {pendingImages.map((img, i) => (
                   <div key={i} className="relative group">
                     <img
-                      src={`data:image/jpeg;base64,${img}`}
+                      src={img}
                       alt={`Attachment ${i + 1}`}
                       className="h-16 w-16 object-cover rounded-lg border border-[var(--color-border)]"
                     />
@@ -369,7 +376,7 @@ export default function ChatPage() {
                 accept="image/*"
                 multiple
                 className="hidden"
-                onChange={(e) => { if (e.target.files) addImages(e.target.files); e.target.value = ""; }}
+                onChange={(e) => { if (e.target.files) void addImages(e.target.files).catch(console.error); e.target.value = ""; }}
               />
               <textarea
                 ref={inputRef}
@@ -386,7 +393,10 @@ export default function ChatPage() {
                     .filter((item) => item.type.startsWith("image/"))
                     .map((item) => item.getAsFile())
                     .filter((f): f is File => f !== null);
-                  if (files.length > 0) addImages(files);
+                  if (files.length > 0) {
+                    e.preventDefault();
+                    void addImages(files).catch(console.error);
+                  }
                 }}
                 placeholder={pendingImages.length > 0 ? "Add a message about this image..." : "Type your message..."}
                 rows={1}

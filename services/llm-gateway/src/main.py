@@ -158,10 +158,10 @@ class ChatRequest(BaseModel):
     system_prompt: str | None = None
     use_rag: bool = False
     use_tools: bool = False
-    history: list[dict] = []
+    history: list[dict] = Field(default_factory=list)
     conversation_id: str | None = None
     user_id: str | None = None
-    images: list[str] = []
+    images: list[str] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):
@@ -783,8 +783,8 @@ async def delete_memory(memory_id: str, user_id: str = Query(...)):
 def _select_model(request: ChatRequest) -> str:
     """Select model: explicit choice from user, or smart routing with tool/vision override."""
     if request.model:
-        # Vision override: even with an explicit model, if images are attached
-        # and the chosen model doesn't support vision, switch to the vision model.
+        # Vision override: if images are attached, always switch to the vision
+        # model since only vision-capable models can process image inputs.
         if request.images and settings.ROUTE_VISION_MODEL:
             logger.info("Model: %s → %s (vision override)", request.model, settings.ROUTE_VISION_MODEL)
             return settings.ROUTE_VISION_MODEL
