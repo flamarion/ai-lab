@@ -864,6 +864,20 @@ async def _retrieve_rag_context(message: str, user_id: str | None = None) -> str
     return None
 
 
+def _effective_use_tools(request: ChatRequest, model: str) -> bool:
+    """Whether to enable tool use for this request.
+
+    Disabled when the selected model is the vision model, since vision models
+    (e.g. gemma3) don't support Ollama's tools API.
+    """
+    if not request.use_tools:
+        return False
+    if request.images and model == settings.ROUTE_VISION_MODEL:
+        logger.info("Tools disabled — vision model (%s) does not support tools", model)
+        return False
+    return True
+
+
 def _build_options(request: ChatRequest) -> dict:
     """Build the Ollama options dict from the request.
 
@@ -920,6 +934,7 @@ async def chat_stream(request: ChatRequest):
 
         try:
             model = _select_model(request)
+            use_tools = _effective_use_tools(request, model)
             conversation_id = request.conversation_id or str(uuid.uuid4())
             messages = await _load_messages(request, conversation_id)
 
@@ -939,7 +954,7 @@ async def chat_stream(request: ChatRequest):
                 user_id=request.user_id,
                 user_system_prompt=request.system_prompt,
                 rag_context=rag_context,
-                use_tools=request.use_tools,
+                use_tools=use_tools,
                 is_child=is_child,
             )
             if system_prompt:
@@ -959,7 +974,7 @@ async def chat_stream(request: ChatRequest):
             # Agent routing — pick a specialized agent or orchestrate multi-agent
             selected_agent = None
             orchestrated = False
-            if request.use_tools:
+            if use_tools:
                 scored_agents = agent_registry.route_multi(request.message)
 
                 # If multiple agents match, try task decomposition
@@ -1011,7 +1026,7 @@ async def chat_stream(request: ChatRequest):
                 response_text = await synthesize_results(request.message, subtasks, client, model)
                 await _put("token", {"text": response_text})
 
-            elif request.use_tools:
+            elif use_tools:
                 await _put("status", {"status": "thinking", "detail": f"Asking {model}..."})
                 # Single-agent tool loop
                 async for event in client.chat_with_tools_stream(
@@ -1072,6 +1087,7 @@ async def chat_stream(request: ChatRequest):
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     model = _select_model(request)
+    use_tools = _effective_use_tools(request, model)
     conversation_id = request.conversation_id or str(uuid.uuid4())
     messages = await _load_messages(request, conversation_id)
 
@@ -1092,7 +1108,7 @@ async def chat(request: ChatRequest):
         user_id=request.user_id,
         user_system_prompt=request.system_prompt,
         rag_context=rag_context,
-        use_tools=request.use_tools,
+        use_tools=use_tools,
         is_child=is_child,
     )
     if system_prompt:
@@ -1112,7 +1128,7 @@ async def chat(request: ChatRequest):
 
     # Agent routing — pick a specialized agent based on the message
     selected_agent = None
-    if request.use_tools:
+    if use_tools:
         selected_agent = agent_registry.route(request.message)
         if selected_agent:
             logger.info("Agent selected: %s", selected_agent.name)
@@ -1127,7 +1143,7 @@ async def chat(request: ChatRequest):
     # Call Ollama — with or without tool use
     tools_used = []
     try:
-        if request.use_tools:
+        if use_tools:
             response_text, tools_used = await client.chat_with_tools(
                 model=model,
                 messages=messages,
