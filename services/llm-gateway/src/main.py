@@ -158,9 +158,10 @@ class ChatRequest(BaseModel):
     system_prompt: str | None = None
     use_rag: bool = False
     use_tools: bool = False
-    history: list[dict] = []
+    history: list[dict] = Field(default_factory=list)
     conversation_id: str | None = None
     user_id: str | None = None
+    images: list[str] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):
@@ -780,11 +781,20 @@ async def delete_memory(memory_id: str, user_id: str = Query(...)):
 # --- Shared helpers for /chat and /chat/stream ---
 
 def _select_model(request: ChatRequest) -> str:
-    """Select model: explicit choice from user, or smart routing with tool override."""
+    """Select model: explicit choice from user, or smart routing with tool/vision override."""
     if request.model:
+        # Vision override: if images are attached, always switch to the vision
+        # model since only vision-capable models can process image inputs.
+        if request.images and settings.ROUTE_VISION_MODEL:
+            logger.info("Model: %s → %s (vision override)", request.model, settings.ROUTE_VISION_MODEL)
+            return settings.ROUTE_VISION_MODEL
         logger.info("Model: %s (user selected)", request.model)
         return request.model
     model, reason = router.select_model(request.message)
+    # Vision takes priority over tools — vision models may not support tool calling
+    if request.images and settings.ROUTE_VISION_MODEL:
+        logger.info("Model: %s → %s (auto — vision override)", model, settings.ROUTE_VISION_MODEL)
+        return settings.ROUTE_VISION_MODEL
     if (request.use_tools and settings.ROUTE_TOOLS_MODEL
             and model != settings.ROUTE_TOOLS_MODEL):
         logger.info("Model: %s → %s (auto — tools override)", model, settings.ROUTE_TOOLS_MODEL)
@@ -797,7 +807,13 @@ async def _load_messages(request: ChatRequest, conversation_id: str) -> list[dic
     """Load conversation history from DB or use the request's inline history."""
     if request.conversation_id and db.is_available():
         stored = await db.get_messages(conversation_id)
-        return [{"role": m["role"], "content": m["content"]} for m in stored]
+        messages = []
+        for m in stored:
+            msg: dict = {"role": m["role"], "content": m["content"]}
+            if m.get("images"):
+                msg["images"] = m["images"]
+            messages.append(msg)
+        return messages
     return list(request.history)
 
 
@@ -811,7 +827,7 @@ async def _persist_turn(
     try:
         title = request.message[:80] if is_new else ""
         await db.upsert_conversation(conversation_id, model, title, request.user_id)
-        await db.add_message(conversation_id, "user", request.message)
+        await db.add_message(conversation_id, "user", request.message, request.images or None)
         await db.add_message(conversation_id, "assistant", response_text)
     except Exception as e:
         logger.warning("Failed to persist conversation: %s", e)
@@ -928,7 +944,10 @@ async def chat_stream(request: ChatRequest):
             )
             if system_prompt:
                 messages.insert(0, {"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": request.message})
+            user_msg: dict = {"role": "user", "content": request.message}
+            if request.images:
+                user_msg["images"] = request.images
+            messages.append(user_msg)
 
             # Summarize if needed
             if context.should_summarize(messages):
@@ -1079,7 +1098,10 @@ async def chat(request: ChatRequest):
     if system_prompt:
         messages.insert(0, {"role": "system", "content": system_prompt})
 
-    messages.append({"role": "user", "content": request.message})
+    user_msg: dict = {"role": "user", "content": request.message}
+    if request.images:
+        user_msg["images"] = request.images
+    messages.append(user_msg)
 
     # Summarize if conversation is getting long (preserves early context)
     if context.should_summarize(messages):

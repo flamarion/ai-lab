@@ -70,6 +70,7 @@ export const auth = {
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
+  images?: string[];
 }
 
 export interface ToolUsed {
@@ -95,7 +96,7 @@ export interface Conversation {
 }
 
 export interface ConversationDetail extends Conversation {
-  messages: { role: string; content: string; created_at: string }[];
+  messages: { role: string; content: string; images?: string[]; created_at: string }[];
 }
 
 export interface StatusEvent {
@@ -130,6 +131,7 @@ export interface ChatParams {
   user_id?: string;
   conversation_id?: string;
   history?: ChatMessage[];
+  images?: string[];
 }
 
 export const chat = {

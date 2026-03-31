@@ -6,11 +6,12 @@ import ChatSidebar from "@/components/chat-sidebar";
 import ChatMessageComponent from "@/components/chat-message";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Menu, Send, Zap, BookOpen } from "lucide-react";
+import { Menu, Send, Zap, BookOpen, Image as ImageIcon, X } from "lucide-react";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
+  images?: string[];
   toolsUsed?: ToolUsed[];
   plan?: string;
 }
@@ -29,8 +30,10 @@ export default function ChatPage() {
   // Per-chat overrides (default from user preferences, togglable in input bar)
   const [ragEnabled, setRagEnabled] = useState<boolean | null>(null); // null = use pref default
   const [toolsEnabled, setToolsEnabled] = useState<boolean | null>(null);
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   // Redirect if not logged in
@@ -55,6 +58,7 @@ export default function ChatPage() {
         data.messages.map((m) => ({
           role: m.role as "user" | "assistant",
           content: m.content,
+          images: m.images?.length ? m.images : undefined,
         }))
       );
     }).catch(() => {});
@@ -74,15 +78,48 @@ export default function ChatPage() {
     e.target.style.height = Math.min(e.target.scrollHeight, 200) + "px";
   };
 
+  const readFileAsDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result;
+        if (typeof result !== "string" || !result.includes(",")) {
+          reject(new Error("Unexpected FileReader result format"));
+          return;
+        }
+        resolve(result);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+  const addImages = async (files: FileList | File[]) => {
+    const imageFiles = Array.from(files).filter((f) => f.type.startsWith("image/"));
+    if (imageFiles.length === 0) return;
+    const dataUrls = await Promise.all(imageFiles.map(readFileAsDataUrl));
+    setPendingImages((prev) => [...prev, ...dataUrls]);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.files.length > 0) {
+      await addImages(e.dataTransfer.files).catch(console.error);
+    }
+  };
+
   const prefs = (user?.preferences || {}) as Record<string, unknown>;
 
   const handleSend = async () => {
-    if (!input.trim() || sending || !user) return;
+    if ((!input.trim() && pendingImages.length === 0) || sending || !user) return;
     const msg = input.trim();
+    const imageDataUrls = pendingImages.length > 0 ? [...pendingImages] : undefined;
+    // Strip data URL prefix for the API — Ollama expects raw base64
+    const apiImages = imageDataUrls?.map((url) => url.split(",")[1]);
     setInput("");
+    setPendingImages([]);
     if (inputRef.current) inputRef.current.style.height = "auto";
 
-    setMessages((prev) => [...prev, { role: "user", content: msg }]);
+    setMessages((prev) => [...prev, { role: "user", content: msg, images: imageDataUrls }]);
     setSending(true);
 
     // Create an AbortController so navigating away can disconnect the
@@ -111,6 +148,7 @@ export default function ChatPage() {
         user_id: user.user_id,
         conversation_id: conversationId || undefined,
         history: conversationId ? undefined : messages.map((m) => ({ role: m.role, content: m.content })),
+        images: apiImages,
       };
 
       setStreamingContent("");
@@ -166,6 +204,7 @@ export default function ChatPage() {
     setStatusText("");
     setRagEnabled(null);
     setToolsEnabled(null);
+    setPendingImages([]);
     setMessages([]);
     setConversationId(id);
     if (!id) {
@@ -261,6 +300,7 @@ export default function ChatPage() {
                   key={`${conversationId}-${i}-${m.role}`}
                   role={m.role}
                   content={m.content}
+                  images={m.images}
                   toolsUsed={m.toolsUsed}
                   plan={m.plan}
                 />
@@ -303,8 +343,41 @@ export default function ChatPage() {
               </button>
             </div>
 
+            {/* Image previews */}
+            {pendingImages.length > 0 && (
+              <div className="flex gap-2 mb-2 flex-wrap">
+                {pendingImages.map((img, i) => (
+                  <div key={i} className="relative group">
+                    <img
+                      src={img}
+                      alt={`Attachment ${i + 1}`}
+                      className="h-16 w-16 object-cover rounded-lg border border-[var(--color-border)]"
+                    />
+                    <button
+                      onClick={() => setPendingImages((prev) => prev.filter((_, j) => j !== i))}
+                      className="absolute -top-1.5 -right-1.5 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Text input + send */}
-            <div className="relative">
+            <div
+              className="relative"
+              onDrop={handleDrop}
+              onDragOver={(e) => e.preventDefault()}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => { if (e.target.files) void addImages(e.target.files).catch(console.error); e.target.value = ""; }}
+              />
               <textarea
                 ref={inputRef}
                 value={input}
@@ -315,13 +388,30 @@ export default function ChatPage() {
                     handleSend();
                   }
                 }}
-                placeholder="Type your message..."
+                onPaste={(e) => {
+                  const files = Array.from(e.clipboardData.items)
+                    .filter((item) => item.type.startsWith("image/"))
+                    .map((item) => item.getAsFile())
+                    .filter((f): f is File => f !== null);
+                  if (files.length > 0) {
+                    e.preventDefault();
+                    void addImages(files).catch(console.error);
+                  }
+                }}
+                placeholder={pendingImages.length > 0 ? "Add a message about this image..." : "Type your message..."}
                 rows={1}
-                className="w-full resize-none bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl px-4 py-3 pr-12 text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-border-light)] transition-colors"
+                className="w-full resize-none bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl px-11 py-3 pr-12 text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-border-light)] transition-colors"
               />
               <button
+                onClick={() => fileInputRef.current?.click()}
+                className="absolute left-3 bottom-3 p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+                title="Attach image"
+              >
+                <ImageIcon size={16} />
+              </button>
+              <button
                 onClick={handleSend}
-                disabled={!input.trim() || sending}
+                disabled={(!input.trim() && pendingImages.length === 0) || sending}
                 className="absolute right-3 bottom-3 p-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] disabled:opacity-30 hover:bg-[var(--color-accent-hover)] transition-colors"
               >
                 <Send size={16} />

@@ -10,6 +10,7 @@ import remarkGfm from "remark-gfm";
 interface Props {
   role: "user" | "assistant";
   content: string;
+  images?: string[];
   toolsUsed?: ToolUsed[];
   plan?: string;
   statusText?: string;
@@ -56,9 +57,15 @@ function CodeBlock({ className, children }: { className?: string; children: Reac
   );
 }
 
-export default function ChatMessage({ role, content, toolsUsed, plan, isStreaming, statusText }: Props) {
+/** Build a displayable src for an image string. Data URLs pass through; raw base64 gets a prefix. */
+function toImageSrc(img: string): string {
+  return img.startsWith("data:") ? img : `data:image/jpeg;base64,${img}`;
+}
+
+export default function ChatMessage({ role, content, images, toolsUsed, plan, isStreaming, statusText }: Props) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  const [expandedImage, setExpandedImage] = useState<string | null>(null);
 
   return (
     <div className={`animate-fade-in ${role === "user" ? "flex justify-end" : ""}`}>
@@ -113,6 +120,35 @@ export default function ChatMessage({ role, content, toolsUsed, plan, isStreamin
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Attached images */}
+        {images && images.length > 0 && (
+          <div className="flex gap-2 flex-wrap mb-2">
+            {images.map((img, i) => (
+              <button key={i} onClick={() => setExpandedImage(img)} className="block">
+                <img
+                  src={toImageSrc(img)}
+                  alt={`Attachment ${i + 1}`}
+                  className="max-h-48 max-w-64 rounded-lg border border-[var(--color-border)] object-contain cursor-pointer hover:opacity-90 transition-opacity"
+                />
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Expanded image overlay */}
+        {expandedImage && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 cursor-pointer"
+            onClick={() => setExpandedImage(null)}
+          >
+            <img
+              src={toImageSrc(expandedImage)}
+              alt="Expanded view"
+              className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
+            />
           </div>
         )}
 
