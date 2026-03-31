@@ -202,7 +202,11 @@ export default function ChatPage() {
         use_tools: toolsEnabled ?? (prefs.use_tools as boolean) ?? DEFAULT_PREFS.use_tools,
         user_id: user.user_id,
         conversation_id: conversationId || undefined,
-        history: conversationId ? undefined : messages.map((m) => ({ role: m.role, content: m.content })),
+        history: conversationId ? undefined : messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          ...(m.images?.length ? { images: m.images.map((img) => img.startsWith("data:") ? img.split(",")[1] : img) } : {}),
+        })),
         images: apiImages,
         attachments: files,
       };

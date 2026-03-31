@@ -65,9 +65,14 @@ function CodeBlock({ className, children }: { className?: string; children: Reac
   );
 }
 
-/** Build a displayable src for an image string. Data URLs pass through; raw base64 gets a prefix. */
+/** Build a displayable src for an image string. Data URLs pass through; raw base64 gets a MIME prefix. */
 function toImageSrc(img: string): string {
-  return img.startsWith("data:") ? img : `data:image/jpeg;base64,${img}`;
+  if (img.startsWith("data:")) return img;
+  // Detect format from base64 magic bytes
+  if (img.startsWith("iVBOR")) return `data:image/png;base64,${img}`;
+  if (img.startsWith("R0lG")) return `data:image/gif;base64,${img}`;
+  if (img.startsWith("UklGR")) return `data:image/webp;base64,${img}`;
+  return `data:image/jpeg;base64,${img}`;
 }
 
 export default function ChatMessage({ role, content, images, attachments, toolsUsed, plan, isStreaming, statusText }: Props) {
