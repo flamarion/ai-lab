@@ -872,7 +872,7 @@ def _effective_use_tools(request: ChatRequest, model: str) -> bool:
     """
     if not request.use_tools:
         return False
-    if request.images and model == settings.ROUTE_VISION_MODEL:
+    if model == settings.ROUTE_VISION_MODEL:
         logger.info("Tools disabled — vision model (%s) does not support tools", model)
         return False
     return True
@@ -1000,6 +1000,7 @@ async def chat_stream(request: ChatRequest):
                         messages.insert(0, {"role": "system", "content": agent_prompt})
                     if selected_agent.model:
                         model = selected_agent.model
+                        use_tools = _effective_use_tools(request, model)
 
             tools_used = []
             response_text = ""
@@ -1139,6 +1140,7 @@ async def chat(request: ChatRequest):
                 messages.insert(0, {"role": "system", "content": agent_prompt})
             if selected_agent.model:
                 model = selected_agent.model
+                use_tools = _effective_use_tools(request, model)
 
     # Call Ollama — with or without tool use
     tools_used = []
