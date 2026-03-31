@@ -135,7 +135,7 @@ async def get_messages(conversation_id: str) -> list[dict]:
     pool = _pool_or_raise()
     rows = await pool.fetch(
         """
-        SELECT role, content, images, created_at
+        SELECT role, content, images, attachments, created_at
         FROM messages
         WHERE conversation_id = $1
         ORDER BY created_at ASC
@@ -147,6 +147,7 @@ async def get_messages(conversation_id: str) -> list[dict]:
             "role": r["role"],
             "content": r["content"],
             "images": r["images"] or [],
+            "attachments": r["attachments"] or [],
             "created_at": r["created_at"].isoformat(),
         }
         for r in rows
@@ -154,19 +155,24 @@ async def get_messages(conversation_id: str) -> list[dict]:
 
 
 async def add_message(
-    conversation_id: str, role: str, content: str, images: list[str] | None = None
+    conversation_id: str,
+    role: str,
+    content: str,
+    images: list[str] | None = None,
+    attachments: list[dict] | None = None,
 ) -> None:
     """Append a message to a conversation."""
     pool = _pool_or_raise()
     await pool.execute(
         """
-        INSERT INTO messages (conversation_id, role, content, images)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO messages (conversation_id, role, content, images, attachments)
+        VALUES ($1, $2, $3, $4, $5)
         """,
         uuid.UUID(conversation_id),
         role,
         content,
         images,
+        attachments,
     )
 
 

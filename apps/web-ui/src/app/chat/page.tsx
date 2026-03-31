@@ -1,17 +1,22 @@
 "use client";
 
 import { useAuth } from "@/lib/auth-context";
-import { chat as chatApi, conversations as convApi, type ToolUsed, DEFAULT_PREFS } from "@/lib/api";
+import { chat as chatApi, conversations as convApi, type ToolUsed, type FileAttachment, DEFAULT_PREFS } from "@/lib/api";
 import ChatSidebar from "@/components/chat-sidebar";
 import ChatMessageComponent from "@/components/chat-message";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Menu, Send, Zap, BookOpen, Image as ImageIcon, X } from "lucide-react";
+import { Menu, Send, Zap, BookOpen, Paperclip, X } from "lucide-react";
+import FileIcon from "@/components/file-icon";
+
+/** File types accepted for text extraction. */
+const TEXT_ACCEPT = ".csv,.json,.txt,.md,.xml,.yaml,.yml,.py,.js,.ts,.html,.css,.sql,.sh,.go,.rs,.java,.toml,.ini,.cfg,.log,.env";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
   images?: string[];
+  attachments?: FileAttachment[];
   toolsUsed?: ToolUsed[];
   plan?: string;
 }
@@ -31,6 +36,7 @@ export default function ChatPage() {
   const [ragEnabled, setRagEnabled] = useState<boolean | null>(null); // null = use pref default
   const [toolsEnabled, setToolsEnabled] = useState<boolean | null>(null);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<FileAttachment[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -59,6 +65,7 @@ export default function ChatPage() {
           role: m.role as "user" | "assistant",
           content: m.content,
           images: m.images?.length ? m.images : undefined,
+          attachments: m.attachments?.length ? m.attachments : undefined,
         }))
       );
     }).catch(() => {});
@@ -93,33 +100,81 @@ export default function ChatPage() {
       reader.readAsDataURL(file);
     });
 
-  const addImages = async (files: FileList | File[]) => {
-    const imageFiles = Array.from(files).filter((f) => f.type.startsWith("image/"));
-    if (imageFiles.length === 0) return;
-    const dataUrls = await Promise.all(imageFiles.map(readFileAsDataUrl));
-    setPendingImages((prev) => [...prev, ...dataUrls]);
+  const readFileAsText = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsText(file);
+    });
+
+  const MAX_TEXT_FILE_SIZE = 512 * 1024; // 512 KB per text file
+  const ALLOWED_TEXT_EXTENSIONS = new Set(TEXT_ACCEPT.split(",").map((e) => e.replace(".", "")));
+
+  const isAllowedTextFile = (file: File): boolean => {
+    const ext = file.name.split(".").pop()?.toLowerCase() || "";
+    return ALLOWED_TEXT_EXTENSIONS.has(ext);
+  };
+
+  const addFiles = async (files: FileList | File[]) => {
+    const items = Array.from(files);
+    const imageFiles = items.filter((f) => f.type.startsWith("image/"));
+    const textFiles = items.filter((f) => !f.type.startsWith("image/") && isAllowedTextFile(f));
+    const rejected = items.filter((f) => !f.type.startsWith("image/") && !isAllowedTextFile(f));
+
+    if (rejected.length > 0) {
+      console.warn("Rejected unsupported files:", rejected.map((f) => f.name));
+    }
+
+    if (imageFiles.length > 0) {
+      const dataUrls = await Promise.all(imageFiles.map(readFileAsDataUrl));
+      setPendingImages((prev) => [...prev, ...dataUrls]);
+    }
+    if (textFiles.length > 0) {
+      const validFiles = textFiles.filter((f) => {
+        if (f.size > MAX_TEXT_FILE_SIZE) {
+          console.warn(`File too large (${(f.size / 1024).toFixed(0)} KB), max 512 KB: ${f.name}`);
+          return false;
+        }
+        return true;
+      });
+      const attachments: FileAttachment[] = await Promise.all(
+        validFiles.map(async (f) => ({
+          name: f.name,
+          type: f.type || "text/plain",
+          size: f.size,
+          content: await readFileAsText(f),
+        })),
+      );
+      setPendingFiles((prev) => [...prev, ...attachments]);
+    }
   };
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     if (e.dataTransfer.files.length > 0) {
-      await addImages(e.dataTransfer.files).catch(console.error);
+      await addFiles(e.dataTransfer.files).catch(console.error);
     }
   };
 
   const prefs = (user?.preferences || {}) as Record<string, unknown>;
 
   const handleSend = async () => {
-    if ((!input.trim() && pendingImages.length === 0) || sending || !user) return;
+    const hasContent = input.trim() || pendingImages.length > 0 || pendingFiles.length > 0;
+    if (!hasContent || sending || !user) return;
     const msg = input.trim();
     const imageDataUrls = pendingImages.length > 0 ? [...pendingImages] : undefined;
     // Strip data URL prefix for the API — Ollama expects raw base64
     const apiImages = imageDataUrls?.map((url) => url.split(",")[1]);
+    // Attachments: metadata for display, content for API
+    const files = pendingFiles.length > 0 ? [...pendingFiles] : undefined;
+    const displayAttachments = files?.map(({ name, type, size }) => ({ name, type, size }));
     setInput("");
     setPendingImages([]);
+    setPendingFiles([]);
     if (inputRef.current) inputRef.current.style.height = "auto";
 
-    setMessages((prev) => [...prev, { role: "user", content: msg, images: imageDataUrls }]);
+    setMessages((prev) => [...prev, { role: "user", content: msg, images: imageDataUrls, attachments: displayAttachments }]);
     setSending(true);
 
     // Create an AbortController so navigating away can disconnect the
@@ -147,8 +202,13 @@ export default function ChatPage() {
         use_tools: toolsEnabled ?? (prefs.use_tools as boolean) ?? DEFAULT_PREFS.use_tools,
         user_id: user.user_id,
         conversation_id: conversationId || undefined,
-        history: conversationId ? undefined : messages.map((m) => ({ role: m.role, content: m.content })),
+        history: conversationId ? undefined : messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          ...(m.images?.length ? { images: m.images.map((img) => img.startsWith("data:") ? img.split(",")[1] : img) } : {}),
+        })),
         images: apiImages,
+        attachments: files,
       };
 
       setStreamingContent("");
@@ -205,6 +265,7 @@ export default function ChatPage() {
     setRagEnabled(null);
     setToolsEnabled(null);
     setPendingImages([]);
+    setPendingFiles([]);
     setMessages([]);
     setConversationId(id);
     if (!id) {
@@ -301,6 +362,7 @@ export default function ChatPage() {
                   role={m.role}
                   content={m.content}
                   images={m.images}
+                  attachments={m.attachments}
                   toolsUsed={m.toolsUsed}
                   plan={m.plan}
                 />
@@ -343,19 +405,31 @@ export default function ChatPage() {
               </button>
             </div>
 
-            {/* Image previews */}
-            {pendingImages.length > 0 && (
+            {/* Attachment previews */}
+            {(pendingImages.length > 0 || pendingFiles.length > 0) && (
               <div className="flex gap-2 mb-2 flex-wrap">
                 {pendingImages.map((img, i) => (
-                  <div key={i} className="relative group">
+                  <div key={`img-${i}`} className="relative group">
                     <img
                       src={img}
-                      alt={`Attachment ${i + 1}`}
+                      alt={`Image ${i + 1}`}
                       className="h-16 w-16 object-cover rounded-lg border border-[var(--color-border)]"
                     />
                     <button
                       onClick={() => setPendingImages((prev) => prev.filter((_, j) => j !== i))}
                       className="absolute -top-1.5 -right-1.5 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                ))}
+                {pendingFiles.map((f, i) => (
+                  <div key={`file-${i}`} className="relative group flex items-center gap-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5">
+                    <FileIcon name={f.name} size={14} />
+                    <span className="text-xs text-[var(--color-text-secondary)] max-w-32 truncate">{f.name}</span>
+                    <button
+                      onClick={() => setPendingFiles((prev) => prev.filter((_, j) => j !== i))}
+                      className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] opacity-0 group-hover:opacity-100 transition-opacity"
                     >
                       <X size={10} />
                     </button>
@@ -373,10 +447,10 @@ export default function ChatPage() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept={`image/*,${TEXT_ACCEPT}`}
                 multiple
                 className="hidden"
-                onChange={(e) => { if (e.target.files) void addImages(e.target.files).catch(console.error); e.target.value = ""; }}
+                onChange={(e) => { if (e.target.files) void addFiles(e.target.files).catch(console.error); e.target.value = ""; }}
               />
               <textarea
                 ref={inputRef}
@@ -395,23 +469,27 @@ export default function ChatPage() {
                     .filter((f): f is File => f !== null);
                   if (files.length > 0) {
                     e.preventDefault();
-                    void addImages(files).catch(console.error);
+                    void addFiles(files).catch(console.error);
                   }
                 }}
-                placeholder={pendingImages.length > 0 ? "Add a message about this image..." : "Type your message..."}
+                placeholder={
+                  pendingImages.length > 0 ? "Add a message about this image..." :
+                  pendingFiles.length > 0 ? "Ask a question about the file..." :
+                  "Type your message..."
+                }
                 rows={1}
                 className="w-full resize-none bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl px-11 py-3 pr-12 text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-border-light)] transition-colors"
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className="absolute left-3 bottom-3 p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-                title="Attach image"
+                title="Attach file"
               >
-                <ImageIcon size={16} />
+                <Paperclip size={16} />
               </button>
               <button
                 onClick={handleSend}
-                disabled={(!input.trim() && pendingImages.length === 0) || sending}
+                disabled={(!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0) || sending}
                 className="absolute right-3 bottom-3 p-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] disabled:opacity-30 hover:bg-[var(--color-accent-hover)] transition-colors"
               >
                 <Send size={16} />

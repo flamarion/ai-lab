@@ -1,7 +1,8 @@
 "use client";
 
-import { type ToolUsed } from "@/lib/api";
+import { type ToolUsed, type FileAttachment } from "@/lib/api";
 import { Wrench, ListChecks, ChevronDown, ChevronUp, Copy, Check } from "lucide-react";
+import FileIcon from "@/components/file-icon";
 import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
@@ -11,10 +12,17 @@ interface Props {
   role: "user" | "assistant";
   content: string;
   images?: string[];
+  attachments?: FileAttachment[];
   toolsUsed?: ToolUsed[];
   plan?: string;
   statusText?: string;
   isStreaming?: boolean;
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function CodeBlock({ className, children }: { className?: string; children: React.ReactNode }) {
@@ -57,12 +65,17 @@ function CodeBlock({ className, children }: { className?: string; children: Reac
   );
 }
 
-/** Build a displayable src for an image string. Data URLs pass through; raw base64 gets a prefix. */
+/** Build a displayable src for an image string. Data URLs pass through; raw base64 gets a MIME prefix. */
 function toImageSrc(img: string): string {
-  return img.startsWith("data:") ? img : `data:image/jpeg;base64,${img}`;
+  if (img.startsWith("data:")) return img;
+  // Detect format from base64 magic bytes
+  if (img.startsWith("iVBOR")) return `data:image/png;base64,${img}`;
+  if (img.startsWith("R0lG")) return `data:image/gif;base64,${img}`;
+  if (img.startsWith("UklGR")) return `data:image/webp;base64,${img}`;
+  return `data:image/jpeg;base64,${img}`;
 }
 
-export default function ChatMessage({ role, content, images, toolsUsed, plan, isStreaming, statusText }: Props) {
+export default function ChatMessage({ role, content, images, attachments, toolsUsed, plan, isStreaming, statusText }: Props) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
@@ -134,6 +147,21 @@ export default function ChatMessage({ role, content, images, toolsUsed, plan, is
                   className="max-h-48 max-w-64 rounded-lg border border-[var(--color-border)] object-contain cursor-pointer hover:opacity-90 transition-opacity"
                 />
               </button>
+            ))}
+          </div>
+        )}
+
+        {/* File attachments */}
+        {attachments && attachments.length > 0 && (
+          <div className="flex gap-2 flex-wrap mb-2">
+            {attachments.map((att, i) => (
+              <div key={i} className="flex items-center gap-1.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5">
+                <FileIcon name={att.name} size={14} />
+                <span className="text-xs text-[var(--color-text-secondary)] max-w-40 truncate">{att.name}</span>
+                {att.size > 0 && (
+                  <span className="text-xs text-[var(--color-text-muted)]">{formatSize(att.size)}</span>
+                )}
+              </div>
             ))}
           </div>
         )}
