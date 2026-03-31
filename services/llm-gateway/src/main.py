@@ -162,6 +162,7 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
     user_id: str | None = None
     images: list[str] = Field(default_factory=list)
+    attachments: list[dict] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):
@@ -827,7 +828,15 @@ async def _persist_turn(
     try:
         title = request.message[:80] if is_new else ""
         await db.upsert_conversation(conversation_id, model, title, request.user_id)
-        await db.add_message(conversation_id, "user", request.message, request.images or None)
+        # Store metadata only (name, type, size) — not the file content
+        att_meta = [
+            {"name": a["name"], "type": a.get("type", ""), "size": a.get("size", 0)}
+            for a in request.attachments
+        ] if request.attachments else None
+        await db.add_message(
+            conversation_id, "user", request.message,
+            images=request.images or None, attachments=att_meta,
+        )
         await db.add_message(conversation_id, "assistant", response_text)
     except Exception as e:
         logger.warning("Failed to persist conversation: %s", e)
@@ -876,6 +885,27 @@ def _effective_use_tools(request: ChatRequest, model: str) -> bool:
         logger.info("Tools disabled — vision model (%s) does not support tools", model)
         return False
     return True
+
+
+def _build_user_message(request: ChatRequest) -> dict:
+    """Build the user message dict, injecting file attachment content as context."""
+    content = request.message
+    if request.attachments:
+        file_blocks = []
+        for att in request.attachments:
+            name = att.get("name", "file")
+            file_content = att.get("content", "")
+            file_type = att.get("type", "")
+            # Determine the code fence language hint
+            ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+            lang = ext if ext in ("json", "csv", "xml", "yaml", "yml", "py", "js", "ts", "html", "css", "sql", "sh", "go", "rs", "java") else ""
+            file_blocks.append(f"**File: {name}** ({file_type})\n```{lang}\n{file_content}\n```")
+        context_block = "\n\n".join(file_blocks)
+        content = f"{context_block}\n\n{content}" if content else context_block
+    msg: dict = {"role": "user", "content": content}
+    if request.images:
+        msg["images"] = request.images
+    return msg
 
 
 def _build_options(request: ChatRequest) -> dict:
@@ -959,10 +989,7 @@ async def chat_stream(request: ChatRequest):
             )
             if system_prompt:
                 messages.insert(0, {"role": "system", "content": system_prompt})
-            user_msg: dict = {"role": "user", "content": request.message}
-            if request.images:
-                user_msg["images"] = request.images
-            messages.append(user_msg)
+            messages.append(_build_user_message(request))
 
             # Summarize if needed
             if context.should_summarize(messages):
@@ -1115,10 +1142,7 @@ async def chat(request: ChatRequest):
     if system_prompt:
         messages.insert(0, {"role": "system", "content": system_prompt})
 
-    user_msg: dict = {"role": "user", "content": request.message}
-    if request.images:
-        user_msg["images"] = request.images
-    messages.append(user_msg)
+    messages.append(_build_user_message(request))
 
     # Summarize if conversation is getting long (preserves early context)
     if context.should_summarize(messages):

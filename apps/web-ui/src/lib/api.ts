@@ -67,10 +67,18 @@ export const auth = {
 
 // --- Chat ---
 
+export interface FileAttachment {
+  name: string;
+  type: string;
+  size: number;
+  content?: string; // text content — only present when sending, not in stored messages
+}
+
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   images?: string[];
+  attachments?: FileAttachment[];
 }
 
 export interface ToolUsed {
@@ -96,7 +104,7 @@ export interface Conversation {
 }
 
 export interface ConversationDetail extends Conversation {
-  messages: { role: string; content: string; images?: string[]; created_at: string }[];
+  messages: { role: string; content: string; images?: string[]; attachments?: FileAttachment[]; created_at: string }[];
 }
 
 export interface StatusEvent {
@@ -132,6 +140,7 @@ export interface ChatParams {
   conversation_id?: string;
   history?: ChatMessage[];
   images?: string[];
+  attachments?: FileAttachment[];
 }
 
 export const chat = {

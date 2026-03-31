@@ -125,7 +125,7 @@ User → nginx (:80) → Next.js (web-ui:3000) → FastAPI (llm-gateway:8000) �
 - `GET /health` — health check (includes database + vector store status)
 - `GET /models` — list available Ollama models (embedding models filtered out)
 - `GET /tools` — list available tools (name + description)
-- `POST /chat` — chat completion (accepts model, message, temperature, top_p, num_predict, system_prompt, use_rag, use_tools, user_id, history, conversation_id, images). When `use_tools=True`, the gateway orchestrates tool calls and returns `tools_used` in the response. When `images` contains base64 strings, the gateway auto-routes to the vision model (gemma3:12b).
+- `POST /chat` — chat completion (accepts model, message, temperature, top_p, num_predict, system_prompt, use_rag, use_tools, user_id, history, conversation_id, images, attachments). When `use_tools=True`, the gateway orchestrates tool calls and returns `tools_used` in the response. When `images` contains base64 strings, the gateway auto-routes to the vision model (gemma3:12b). When `attachments` contains file objects ({name, content, type, size}), the file content is injected into the user prompt as context blocks.
 - `POST /chat/stream` — streaming chat via SSE. Same params as `/chat` but returns real-time status events (`thinking`, `tool_call`, `tool_result`, `summarizing`) followed by a `done` event with the full response.
 
 **Auth:**
@@ -190,6 +190,7 @@ Current migrations:
 - `008_mcp_config.sql` — mcp_config table (persists MCP server config across container restarts)
 - `009_user_memory.sql` — user_memory table (per-user persistent memory for cross-conversation context)
 - `010_message_images.sql` — images text[] column on messages (base64-encoded attachments for vision)
+- `011_message_attachments.sql` — attachments jsonb column on messages (file metadata: name, type, size)
 
 Two compose files, one per VM:
 - `infra/docker/docker-compose.yml` — ai-app VM (nginx + gateway + chat UI + SearXNG)
@@ -306,7 +307,8 @@ Built-in tools: `calculator`, `current_time`, `unit_convert`, `save_memory`, `we
 - **Smart model routing**: When "Auto" is selected (no explicit model in request), the gateway's `router.py` classifies the prompt via keyword matching and picks the best model. Code/technical prompts route to `ROUTE_CODE_MODEL` (qwen3.5:27b), everything else to `ROUTE_DEFAULT_MODEL` (mistral). When tools are enabled, auto-selected models are overridden to `ROUTE_TOOLS_MODEL` (qwen3.5:27b). When images are attached, the model is overridden to `ROUTE_VISION_MODEL` (gemma3:12b) — this takes priority over both user selection and tools, since vision requires a vision-capable model. The selected model and reason are logged for observability.
 - **asyncpg JSONB codec**: `db.py` registers `json.dumps`/`json.loads` codecs on every pool connection via `init=_init_connection`. This makes JSONB columns round-trip as Python dicts automatically. Without it, asyncpg returns raw JSON strings which FastAPI double-encodes. Pass dicts directly to asyncpg (no `json.dumps` needed), and don't use `::jsonb` casts.
 - **Child safety**: Users flagged `is_child` in the admin panel get `CHILD_SAFETY_PROMPT` injected into every system prompt (via `context.build_system_prompt`). The `is_child` flag is returned in login/session responses and looked up per-chat via `_get_is_child()`.
-- **Chat endpoint helpers**: Shared logic between `/chat` and `/chat/stream` is extracted into helpers: `_get_is_child()`, `_retrieve_rag_context()`, `_build_options()`, `_maybe_extract_memories()`. Never duplicate code between these endpoints — add a helper instead.
+- **Chat endpoint helpers**: Shared logic between `/chat` and `/chat/stream` is extracted into helpers: `_get_is_child()`, `_retrieve_rag_context()`, `_build_options()`, `_build_user_message()`, `_effective_use_tools()`, `_maybe_extract_memories()`. Never duplicate code between these endpoints — add a helper instead.
+- **File attachments**: Text files (CSV, JSON, txt, code) are read client-side and sent as `attachments` in the chat request. The gateway's `_build_user_message()` injects file content into the prompt as fenced code blocks. Only metadata (name, type, size) is persisted in the DB — the content lives in the message text. Images use the separate `images` field for Ollama vision.
 - **Settings form architecture**: `SettingsPage` returns null until auth loads, then renders `<SettingsForm key={user.user_id}>`. This ensures `useState` initializes with DB preferences, not defaults. The `key` prop forces remount on user switch.
 
 ## Ollama Server Tuning
