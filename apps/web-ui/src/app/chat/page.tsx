@@ -2,6 +2,7 @@
 
 import { useAuth } from "@/lib/auth-context";
 import { chat as chatApi, conversations as convApi, type ToolUsed, type FileAttachment, DEFAULT_PREFS } from "@/lib/api";
+import { createLogger } from "@/lib/logger";
 import ChatSidebar from "@/components/chat-sidebar";
 import ChatMessageComponent from "@/components/chat-message";
 import { useRouter } from "next/navigation";
@@ -20,6 +21,8 @@ interface Message {
   toolsUsed?: ToolUsed[];
   plan?: string;
 }
+
+const log = createLogger("chat");
 
 export default function ChatPage() {
   const { user, loading } = useAuth();
@@ -211,6 +214,8 @@ export default function ChatPage() {
         attachments: files,
       };
 
+      log.info("send", { model: params.model, use_tools: params.use_tools, use_rag: params.use_rag, has_images: !!apiImages?.length, conversation_id: conversationId });
+
       setStreamingContent("");
 
       const result = await chatApi.sendStream(
@@ -222,6 +227,8 @@ export default function ChatPage() {
         },
         controller.signal,
       );
+
+      log.info("response", { model: result.model, conversation_id: result.conversation_id, tools_used: result.tools_used.length, response_length: result.response.length });
 
       setStreamingContent("");
       setStatusText("");
@@ -238,12 +245,17 @@ export default function ChatPage() {
       ]);
     } catch (err) {
       // AbortError is expected when navigating to a new chat — don't show it
-      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (err instanceof DOMException && err.name === "AbortError") {
+        log.debug("send:aborted", { conversation_id: conversationId });
+        return;
+      }
+      const errorMsg = err instanceof Error ? err.message : "Something went wrong";
+      log.error("send:error", { error: errorMsg, conversation_id: conversationId });
       setStatusText("");
       setStreamingContent("");
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: `Error: ${err instanceof Error ? err.message : "Something went wrong"}` },
+        { role: "assistant", content: `Error: ${errorMsg}` },
       ]);
     } finally {
       abortRef.current = null;

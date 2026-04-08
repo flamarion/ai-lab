@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import logging.config
 import os
 import re
 import sys
@@ -17,6 +18,35 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
     sys.path.insert(0, _shared_path)
 
 from ai_lab_common.config import settings
+
+# --- Structured logging (JSON to stdout, ready for log aggregation) ---
+logging.config.dictConfig({
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "json": {
+            "()": "src.logging_config.JSONFormatter",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stdout",
+            "formatter": "json",
+        },
+    },
+    "root": {
+        "level": settings.LOG_LEVEL.upper(),
+        "handlers": ["console"],
+    },
+    # Keep uvicorn access logs at INFO regardless
+    "loggers": {
+        "uvicorn.access": {"level": "INFO"},
+        "uvicorn.error": {"level": "INFO"},
+        "httpx": {"level": "WARNING"},
+        "httpcore": {"level": "WARNING"},
+    },
+})
 from src import chunker, context, db, migrations, router, tools, vector_store
 from src.agents import registry as agent_registry, decompose_task, synthesize_results, execute_subtask_reliable
 from src.mcp_client import mcp_manager
@@ -1093,19 +1123,28 @@ async def chat_stream(request: ChatRequest):
                     response_text += token
                     await _put("token", {"text": token})
 
-            # Record trace for Weave (streaming methods aren't directly traced)
-            await client._trace_streaming_chat(model, messages, options, response_text)
-
+            # Send final result and close the SSE stream immediately.
+            # Post-processing (DB persist, Weave trace) runs as a detached
+            # task so it never blocks the client.
             is_new = not request.conversation_id
-            await _persist_turn(request, conversation_id, model, response_text, is_new, messages)
-
-            # Send final result
             await _put("done", {"response": response_text, "model": model, "conversation_id": conversation_id, "tools_used": tools_used, "plan": plan})
+            await queue.put(None)  # sentinel — closes SSE stream
+
+            # Fire-and-forget: persist and trace after the stream is closed.
+            async def _post_process():
+                try:
+                    await _persist_turn(request, conversation_id, model, response_text, is_new, messages)
+                except Exception:
+                    logger.exception("Failed to persist turn")
+                try:
+                    await client._trace_streaming_chat(model, messages, options, response_text)
+                except Exception:
+                    logger.exception("Weave trace failed")
+            asyncio.create_task(_post_process())
 
         except Exception as e:
             await _put("error", {"detail": str(e)})
-        finally:
-            await queue.put(None)  # sentinel — signals consumer to stop
+            await queue.put(None)  # sentinel — closes SSE stream on error
 
     # Launch generation as an independent task (survives client disconnect)
     asyncio.create_task(_run_generation())
