@@ -84,6 +84,10 @@ async def lifespan(app: FastAPI):
     # no connection needed until the first request.
     client = OllamaClient(settings.OLLAMA_HOST)
 
+    # Store the main event loop so worker threads (run_in_executor) can
+    # schedule async sandbox operations via run_coroutine_threadsafe.
+    sandbox.init(asyncio.get_running_loop())
+
     # --- Background initialization ---
     # All external connections (DB, Qdrant, Weave, MCP) happen in a
     # background task so the gateway starts serving requests immediately.

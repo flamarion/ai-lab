@@ -252,16 +252,13 @@ def run_code(code: str, language: str = "python") -> str:
         return f"Error: unsupported language '{language}'. Use python, javascript, or bash."
 
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            future = asyncio.run_coroutine_threadsafe(
-                sandbox.run_code(code, language),
-                loop,
-            )
-            # 70s > 60s container timeout — ensures the sandbox timeout fires first
-            return future.result(timeout=70)
-        else:
-            return asyncio.run(sandbox.run_code(code, language))
+        loop = sandbox.get_loop()
+        future = asyncio.run_coroutine_threadsafe(
+            sandbox.run_code(code, language),
+            loop,
+        )
+        # 70s > 60s container timeout — ensures the sandbox timeout fires first
+        return future.result(timeout=70)
     except Exception as e:
         return f"Error running code: {e}"
 

@@ -36,6 +36,24 @@ _semaphore = asyncio.Semaphore(3)
 # Lazy-initialized Docker client (module-level singleton).
 _docker: aiodocker.Docker | None = None
 
+# Reference to the main asyncio event loop.  Set once during gateway
+# startup so worker threads (run_in_executor) can schedule coroutines
+# via asyncio.run_coroutine_threadsafe.
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+def init(loop: asyncio.AbstractEventLoop) -> None:
+    """Store the main event loop.  Call from the gateway lifespan."""
+    global _loop
+    _loop = loop
+
+
+def get_loop() -> asyncio.AbstractEventLoop:
+    """Return the main event loop (for use from worker threads)."""
+    if _loop is None:
+        raise RuntimeError("Sandbox not initialized — call sandbox.init(loop) first")
+    return _loop
+
 
 async def _get_docker() -> aiodocker.Docker:
     global _docker
@@ -100,6 +118,12 @@ async def run_code(code: str, language: str) -> str:
                         "PidsLimit": 64,
                         "NetworkMode": "none",
                         "SecurityOpt": ["no-new-privileges"],
+                        # Cap Docker log file at 1MB — bounds what
+                        # container.log() can return to the gateway.
+                        "LogConfig": {
+                            "Type": "json-file",
+                            "Config": {"max-size": "1m", "max-file": "1"},
+                        },
                     },
                     "NetworkDisabled": True,
                     "User": "sandbox",
@@ -126,13 +150,23 @@ async def run_code(code: str, language: str) -> str:
                 logger.warning("Sandbox timed out: %s", container_name)
                 return f"Error: execution timed out after {timeout}s"
 
-            # Collect output
+            # Collect output incrementally — stop as soon as we hit the
+            # byte limit so we never hold more than MAX_OUTPUT_BYTES in memory.
             logs = await container.log(stdout=True, stderr=True)
-            output = "".join(logs)
-
-            # Truncate
-            if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
-                output = output[:MAX_OUTPUT_BYTES] + "\n... (output truncated at 50KB)"
+            parts: list[str] = []
+            total = 0
+            truncated = False
+            for line in logs:
+                line_bytes = len(line.encode("utf-8"))
+                if total + line_bytes > MAX_OUTPUT_BYTES:
+                    parts.append(line[: MAX_OUTPUT_BYTES - total])
+                    truncated = True
+                    break
+                parts.append(line)
+                total += line_bytes
+            output = "".join(parts)
+            if truncated:
+                output += "\n... (output truncated at 50KB)"
 
             if exit_code != 0:
                 output = f"[exit code {exit_code}]\n{output}"
