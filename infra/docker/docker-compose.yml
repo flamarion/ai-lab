@@ -25,6 +25,9 @@ services:
       # MCP OAuth token cache — mcp-remote stores tokens here after
       # manual auth on the host. Survives container restarts.
       - ~/.mcp-auth:/root/.mcp-auth
+      # Docker socket — allows the gateway to spawn sandbox containers
+      # for the run_code tool (sibling containers, not nested).
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
   web-ui:

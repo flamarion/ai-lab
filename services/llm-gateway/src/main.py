@@ -47,7 +47,7 @@ logging.config.dictConfig({
         "httpcore": {"level": "WARNING"},
     },
 })
-from src import chunker, context, db, migrations, router, tools, vector_store
+from src import chunker, context, db, migrations, router, sandbox, tools, vector_store
 from src.agents import registry as agent_registry, decompose_task, synthesize_results, execute_subtask_reliable
 from src.mcp_client import mcp_manager
 from src.ollama_client import OllamaClient
@@ -83,6 +83,10 @@ async def lifespan(app: FastAPI):
     # Create the Ollama client immediately — it's just an httpx client,
     # no connection needed until the first request.
     client = OllamaClient(settings.OLLAMA_HOST)
+
+    # Store the main event loop so worker threads (run_in_executor) can
+    # schedule async sandbox operations via run_coroutine_threadsafe.
+    sandbox.init(asyncio.get_running_loop())
 
     # --- Background initialization ---
     # All external connections (DB, Qdrant, Weave, MCP) happen in a
@@ -164,6 +168,7 @@ async def lifespan(app: FastAPI):
 
     init_task.cancel()
     await mcp_manager.stop()
+    await sandbox.close()
     await client.close()
     await db.close_pool()
     vector_store.close_store()

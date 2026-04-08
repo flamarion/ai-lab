@@ -28,6 +28,11 @@ class Settings:
     # SearXNG (web search)
     SEARXNG_URL: str = os.getenv("SEARXNG_URL", "http://searxng:8080")
 
+    # Sandbox (code execution)
+    SANDBOX_IMAGE: str = os.getenv("SANDBOX_IMAGE", "ai-lab-sandbox:latest")
+    SANDBOX_TIMEOUT: int = int(os.getenv("SANDBOX_TIMEOUT", "60"))
+    SANDBOX_MEMORY_MB: int = int(os.getenv("SANDBOX_MEMORY_MB", "256"))
+
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
