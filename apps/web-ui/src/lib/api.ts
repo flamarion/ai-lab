@@ -3,6 +3,9 @@
  * to the FastAPI gateway.
  */
 
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api");
 const BASE = "/api";
 
 async function request<T>(
@@ -160,6 +163,9 @@ export const chat = {
     onToken?: (text: string) => void,
     signal?: AbortSignal,
   ): Promise<ChatResponse> => {
+    const startMs = Date.now();
+    log.info("stream:start", { model: params.model, use_tools: params.use_tools, conversation_id: params.conversation_id });
+
     const res = await fetch(`${BASE}/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -168,17 +174,24 @@ export const chat = {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
+      log.error("stream:http_error", { status: res.status, detail: body.detail });
       throw new Error(body.detail || `API error: ${res.status}`);
     }
+
+    log.debug("stream:connected", { elapsed_ms: Date.now() - startMs });
 
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let result: ChatResponse | null = null;
+    let tokenCount = 0;
 
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        log.debug("stream:reader_done", { has_result: !!result, tokens: tokenCount, elapsed_ms: Date.now() - startMs });
+        break;
+      }
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
@@ -191,19 +204,26 @@ export const chat = {
         } else if (line.startsWith("data: ")) {
           const data = JSON.parse(line.slice(6));
           if (eventType === "status") {
+            log.debug("stream:status", { status: (data as StatusEvent).status, detail: (data as StatusEvent).detail });
             onStatus(data as StatusEvent);
           } else if (eventType === "token") {
+            tokenCount++;
             onToken?.(data.text);
           } else if (eventType === "done") {
+            log.info("stream:done", { model: data.model, conversation_id: data.conversation_id, tools_used: data.tools_used?.length ?? 0, elapsed_ms: Date.now() - startMs });
             result = data as ChatResponse;
           } else if (eventType === "error") {
+            log.error("stream:error", { detail: data.detail, elapsed_ms: Date.now() - startMs });
             throw new Error(data.detail || "Stream error");
           }
         }
       }
     }
 
-    if (!result) throw new Error("Stream ended without result");
+    if (!result) {
+      log.error("stream:no_result", { tokens: tokenCount, elapsed_ms: Date.now() - startMs });
+      throw new Error("Stream ended without result");
+    }
     return result;
   },
 

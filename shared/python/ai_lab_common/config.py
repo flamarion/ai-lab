@@ -28,5 +28,8 @@ class Settings:
     # SearXNG (web search)
     SEARXNG_URL: str = os.getenv("SEARXNG_URL", "http://searxng:8080")
 
+    # Logging
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+
 
 settings = Settings()

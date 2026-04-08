@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import logging.config
 import os
 import re
 import sys
@@ -17,6 +18,35 @@ if os.path.isdir(_shared_path) and _shared_path not in sys.path:
     sys.path.insert(0, _shared_path)
 
 from ai_lab_common.config import settings
+
+# --- Structured logging (JSON to stdout, ready for log aggregation) ---
+logging.config.dictConfig({
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "json": {
+            "()": "src.logging_config.JSONFormatter",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stdout",
+            "formatter": "json",
+        },
+    },
+    "root": {
+        "level": settings.LOG_LEVEL,
+        "handlers": ["console"],
+    },
+    # Keep uvicorn access logs at INFO regardless
+    "loggers": {
+        "uvicorn.access": {"level": "INFO"},
+        "uvicorn.error": {"level": "INFO"},
+        "httpx": {"level": "WARNING"},
+        "httpcore": {"level": "WARNING"},
+    },
+})
 from src import chunker, context, db, migrations, router, tools, vector_store
 from src.agents import registry as agent_registry, decompose_task, synthesize_results, execute_subtask_reliable
 from src.mcp_client import mcp_manager
@@ -1093,14 +1123,21 @@ async def chat_stream(request: ChatRequest):
                     response_text += token
                     await _put("token", {"text": token})
 
-            # Record trace for Weave (streaming methods aren't directly traced)
-            await client._trace_streaming_chat(model, messages, options, response_text)
-
+            # Send final result to the browser FIRST — post-processing
+            # (Weave trace, DB persist) must never block the user.
             is_new = not request.conversation_id
-            await _persist_turn(request, conversation_id, model, response_text, is_new, messages)
-
-            # Send final result
             await _put("done", {"response": response_text, "model": model, "conversation_id": conversation_id, "tools_used": tools_used, "plan": plan})
+
+            # Post-processing: persist and trace in the background so the
+            # SSE stream closes promptly.  Errors here are logged, not fatal.
+            try:
+                await _persist_turn(request, conversation_id, model, response_text, is_new, messages)
+            except Exception as e:
+                logger.error("Failed to persist turn: %s", e)
+            try:
+                await client._trace_streaming_chat(model, messages, options, response_text)
+            except Exception as e:
+                logger.warning("Weave trace failed: %s", e)
 
         except Exception as e:
             await _put("error", {"detail": str(e)})
