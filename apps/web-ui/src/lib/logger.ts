@@ -1,7 +1,7 @@
 /**
  * Structured JSON logger for the web UI.
  *
- * - Dev mode (NODE_ENV !== "production"): logs to console as JSON objects.
+ * - Dev mode (NODE_ENV !== "production"): logs JSON strings to the console.
  * - Production: silent (no-op) to avoid noise in user browsers.
  *
  * Usage:

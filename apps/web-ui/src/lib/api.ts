@@ -212,6 +212,10 @@ export const chat = {
           } else if (eventType === "done") {
             log.info("stream:done", { model: data.model, conversation_id: data.conversation_id, tools_used: data.tools_used?.length ?? 0, elapsed_ms: Date.now() - startMs });
             result = data as ChatResponse;
+            // Don't wait for stream EOF — return immediately so the UI
+            // renders the final message without blocking on post-processing.
+            reader.cancel();
+            return result;
           } else if (eventType === "error") {
             log.error("stream:error", { detail: data.detail, elapsed_ms: Date.now() - startMs });
             throw new Error(data.detail || "Stream error");

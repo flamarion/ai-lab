@@ -17,6 +17,10 @@ from datetime import datetime, timezone
 class JSONFormatter(logging.Formatter):
     """Formats log records as single-line JSON objects."""
 
+    # Internal LogRecord attributes to exclude from extra fields.
+    # Computed once at class load, not per format() call.
+    _SKIP = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__)
+
     def format(self, record: logging.LogRecord) -> str:
         entry = {
             "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
@@ -26,9 +30,8 @@ class JSONFormatter(logging.Formatter):
         }
 
         # Merge extra fields (skip internal LogRecord attributes)
-        _SKIP = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__)
         for key, val in record.__dict__.items():
-            if key not in _SKIP and key not in entry:
+            if key not in self._SKIP and key not in entry:
                 entry[key] = val
 
         if record.exc_info and record.exc_info[1]:

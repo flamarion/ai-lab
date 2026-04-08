@@ -36,7 +36,7 @@ logging.config.dictConfig({
         },
     },
     "root": {
-        "level": settings.LOG_LEVEL,
+        "level": settings.LOG_LEVEL.upper(),
         "handlers": ["console"],
     },
     # Keep uvicorn access logs at INFO regardless
@@ -1123,26 +1123,28 @@ async def chat_stream(request: ChatRequest):
                     response_text += token
                     await _put("token", {"text": token})
 
-            # Send final result to the browser FIRST — post-processing
-            # (Weave trace, DB persist) must never block the user.
+            # Send final result and close the SSE stream immediately.
+            # Post-processing (DB persist, Weave trace) runs as a detached
+            # task so it never blocks the client.
             is_new = not request.conversation_id
             await _put("done", {"response": response_text, "model": model, "conversation_id": conversation_id, "tools_used": tools_used, "plan": plan})
+            await queue.put(None)  # sentinel — closes SSE stream
 
-            # Post-processing: persist and trace in the background so the
-            # SSE stream closes promptly.  Errors here are logged, not fatal.
-            try:
-                await _persist_turn(request, conversation_id, model, response_text, is_new, messages)
-            except Exception as e:
-                logger.error("Failed to persist turn: %s", e)
-            try:
-                await client._trace_streaming_chat(model, messages, options, response_text)
-            except Exception as e:
-                logger.warning("Weave trace failed: %s", e)
+            # Fire-and-forget: persist and trace after the stream is closed.
+            async def _post_process():
+                try:
+                    await _persist_turn(request, conversation_id, model, response_text, is_new, messages)
+                except Exception:
+                    logger.exception("Failed to persist turn")
+                try:
+                    await client._trace_streaming_chat(model, messages, options, response_text)
+                except Exception:
+                    logger.exception("Weave trace failed")
+            asyncio.create_task(_post_process())
 
         except Exception as e:
             await _put("error", {"detail": str(e)})
-        finally:
-            await queue.put(None)  # sentinel — signals consumer to stop
+            await queue.put(None)  # sentinel — closes SSE stream on error
 
     # Launch generation as an independent task (survives client disconnect)
     asyncio.create_task(_run_generation())
