@@ -234,6 +234,38 @@ def save_memory(fact: str) -> str:
         return f"Error saving memory: {e}"
 
 
+def run_code(code: str, language: str = "python") -> str:
+    """Execute code in a sandboxed Docker container.
+
+    Use this when the user asks you to run, test, or execute code, or when you
+    need to compute something complex, process data, or demonstrate code behavior.
+    Supports Python, JavaScript, and Bash.
+    """
+    import asyncio
+    from src import sandbox
+
+    if not code.strip():
+        return "Error: empty code"
+
+    language = language.lower().strip()
+    if language not in ("python", "javascript", "bash"):
+        return f"Error: unsupported language '{language}'. Use python, javascript, or bash."
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(
+                sandbox.run_code(code, language),
+                loop,
+            )
+            # 70s > 60s container timeout — ensures the sandbox timeout fires first
+            return future.result(timeout=70)
+        else:
+            return asyncio.run(sandbox.run_code(code, language))
+    except Exception as e:
+        return f"Error running code: {e}"
+
+
 _SEARXNG_URL = settings.SEARXNG_URL
 _search_client = httpx.Client(timeout=15, follow_redirects=True)
 
@@ -475,6 +507,38 @@ TOOL_REGISTRY: dict[str, dict] = {
                         },
                     },
                     "required": ["fact"],
+                },
+            },
+        },
+    },
+    "run_code": {
+        "fn": run_code,
+        "schema": {
+            "type": "function",
+            "function": {
+                "name": "run_code",
+                "description": (
+                    "Execute code in a sandboxed environment. Use this when the user asks "
+                    "you to run, test, or execute code, or when you need to compute something "
+                    "complex, process data, generate output, or demonstrate code behavior. "
+                    "Supports Python, JavaScript, and Bash. The code runs in an isolated "
+                    "container with no network access and a 60-second timeout. "
+                    "Returns stdout and stderr output."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "string",
+                            "description": "The source code to execute",
+                        },
+                        "language": {
+                            "type": "string",
+                            "description": "Programming language: 'python', 'javascript', or 'bash'",
+                            "enum": ["python", "javascript", "bash"],
+                        },
+                    },
+                    "required": ["code", "language"],
                 },
             },
         },

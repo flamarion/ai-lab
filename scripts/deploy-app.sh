@@ -52,6 +52,10 @@ echo "Pulling latest changes..."
 cd "$REPO_ROOT"
 git pull --ff-only
 
+# Build the sandbox image used by the run_code tool
+echo "Building sandbox image..."
+docker build -t ai-lab-sandbox:latest "$COMPOSE_DIR/sandbox/"
+
 # Build and start services (detached so containers survive SSH disconnect)
 echo "Building and starting services..."
 cd "$COMPOSE_DIR"

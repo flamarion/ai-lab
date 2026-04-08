@@ -47,7 +47,7 @@ logging.config.dictConfig({
         "httpcore": {"level": "WARNING"},
     },
 })
-from src import chunker, context, db, migrations, router, tools, vector_store
+from src import chunker, context, db, migrations, router, sandbox, tools, vector_store
 from src.agents import registry as agent_registry, decompose_task, synthesize_results, execute_subtask_reliable
 from src.mcp_client import mcp_manager
 from src.ollama_client import OllamaClient
@@ -164,6 +164,7 @@ async def lifespan(app: FastAPI):
 
     init_task.cancel()
     await mcp_manager.stop()
+    await sandbox.close()
     await client.close()
     await db.close_pool()
     vector_store.close_store()
