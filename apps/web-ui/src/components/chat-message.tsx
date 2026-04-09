@@ -27,12 +27,31 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const UNSAFE_PATTERNS = [
+  /while\s*\(\s*true\s*\)/i,
+  /while\s*\(\s*1\s*\)/i,
+  /for\s*\(\s*;\s*;\s*\)/,
+  /document\.cookie/i,
+  /document\.location/i,
+  /window\.location/i,
+  /location\s*[=]/,
+  /\.localStorage/i,
+  /\.sessionStorage/i,
+  /eval\s*\(/,
+  /Function\s*\(/,
+  /crypto\.subtle/i,
+];
+
+function isSafeHtml(html: string): boolean {
+  return !UNSAFE_PATTERNS.some((p) => p.test(html));
+}
+
 function CodeBlock({ className, children }: { className?: string; children: React.ReactNode }) {
   const [copied, setCopied] = useState(false);
   const text = String(children).replace(/\n$/, "");
   const lang = className?.replace("language-", "") || "";
   const isHtml = lang === "html";
-  const [previewing, setPreviewing] = useState(isHtml);
+  const [previewing, setPreviewing] = useState(isHtml && isSafeHtml(text));
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(text);

@@ -13,6 +13,7 @@ const CSP = [
   "connect-src 'none'",
   "font-src 'none'",
   "frame-src 'none'",
+  "form-action 'none'",
 ].join("; ");
 
 const INJECTED_HEAD = `
