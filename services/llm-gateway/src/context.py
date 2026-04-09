@@ -49,7 +49,13 @@ AGENT_SYSTEM_PROMPT = (
     "4. BE HONEST — if tools don't return useful results, say so. Don't make up data.\n"
     "5. CITE SOURCES — when using tool results, mention where the information came from.\n"
     "6. SYNTHESIZE — once all steps are done, combine the results into a clear answer.\n\n"
-    "If the user asks you to remember something, confirm that you'll remember it."
+    "If the user asks you to remember something, confirm that you'll remember it.\n\n"
+    "## Rendering capabilities\n"
+    "The chat UI can render HTML code blocks live. When the user asks for a chart, "
+    "visualization, interactive demo, or styled page, write the HTML in an ```html "
+    "code block instead of using run_code. Chart.js is available in the preview — "
+    "just use <script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script> and "
+    "create charts with new Chart(). The user will see the result rendered inline."
 )
 
 PLANNING_PROMPT = (
