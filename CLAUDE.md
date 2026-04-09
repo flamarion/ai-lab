@@ -336,14 +336,15 @@ Note: `OLLAMA_CONTEXT_LENGTH` was removed — Ollama auto-detects 24GB VRAM and 
 
 ## Roadmap
 
-Phases 1-8 are complete. Remaining phases close the gap with Claude Chat / ChatGPT within homelab constraints:
+Phases 1-10 are complete. Remaining phases close the gap with Claude Chat / ChatGPT within homelab constraints:
 
 | Phase | Feature | Description |
 |-------|---------|-------------|
 | 9a | Vision input | Image uploads in chat → gemma3:12b vision. UI drag-drop/file picker, base64 encode, Ollama `images` field |
 | 9b | Generic file upload | CSV, JSON, images attached to conversation context (not RAG). Preview/summary injected into prompt |
 | 10 | Code execution sandbox | `run_code` local tool. Ephemeral Docker container, no network, resource limits, timeout |
-| 11 | Rich rendering / artifacts | Sandboxed iframe in chat UI for live HTML/React/chart rendering |
+| 11 | Rich rendering / artifacts | Sandboxed iframe in chat UI for live HTML/Chart.js rendering. Auto-previews `html` code blocks. |
+| 12 | AI Skills | DB-configurable skill definitions (instructions + constraints) injected into system prompt. Teach the AI *how* to use its tools without hardcoding. Admin UI for CRUD. |
 
 ### Vision-capable models
 gemma3:12b supports vision natively via Ollama. When an image is attached, the gateway should route to a vision-capable model. Ollama's `/api/chat` accepts an `images` field (base64 strings) in message objects — the OllamaClient passes messages as-is, so no client changes are needed.

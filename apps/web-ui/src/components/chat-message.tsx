@@ -1,12 +1,14 @@
 "use client";
 
 import { type ToolUsed, type FileAttachment } from "@/lib/api";
-import { Wrench, ListChecks, ChevronDown, ChevronUp, Copy, Check } from "lucide-react";
+import { Wrench, ListChecks, ChevronDown, ChevronUp, Copy, Check, Eye, Code } from "lucide-react";
 import FileIcon from "@/components/file-icon";
-import { useState, useCallback } from "react";
+import { useState, useCallback, lazy, Suspense } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+
+const HtmlPreview = lazy(() => import("@/components/html-preview"));
 
 interface Props {
   role: "user" | "assistant";
@@ -25,10 +27,31 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const UNSAFE_PATTERNS = [
+  /while\s*\(\s*true\s*\)/i,
+  /while\s*\(\s*1\s*\)/i,
+  /for\s*\(\s*;\s*;\s*\)/,
+  /document\.cookie/i,
+  /document\.location/i,
+  /window\.location/i,
+  /location\s*[=]/,
+  /\.localStorage/i,
+  /\.sessionStorage/i,
+  /eval\s*\(/,
+  /Function\s*\(/,
+  /crypto\.subtle/i,
+];
+
+function isSafeHtml(html: string): boolean {
+  return !UNSAFE_PATTERNS.some((p) => p.test(html));
+}
+
 function CodeBlock({ className, children }: { className?: string; children: React.ReactNode }) {
   const [copied, setCopied] = useState(false);
   const text = String(children).replace(/\n$/, "");
   const lang = className?.replace("language-", "") || "";
+  const isHtml = lang === "html";
+  const [previewing, setPreviewing] = useState(isHtml && isSafeHtml(text));
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(text);
@@ -41,18 +64,35 @@ function CodeBlock({ className, children }: { className?: string; children: Reac
       {lang && (
         <div className="flex items-center justify-between px-4 py-1.5 bg-[var(--color-bg)] border border-b-0 border-[var(--color-border)] rounded-t-lg">
           <span className="text-xs text-[var(--color-text-muted)]">{lang}</span>
-          <button
-            onClick={handleCopy}
-            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] flex items-center gap-1 transition-colors"
-          >
-            {copied ? <Check size={12} /> : <Copy size={12} />}
-            {copied ? "Copied" : "Copy"}
-          </button>
+          <div className="flex items-center gap-3">
+            {isHtml && (
+              <button
+                onClick={() => setPreviewing((p) => !p)}
+                className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-accent)] flex items-center gap-1 transition-colors"
+              >
+                {previewing ? <Code size={12} /> : <Eye size={12} />}
+                {previewing ? "Code" : "Preview"}
+              </button>
+            )}
+            <button
+              onClick={handleCopy}
+              className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] flex items-center gap-1 transition-colors"
+            >
+              {copied ? <Check size={12} /> : <Copy size={12} />}
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
         </div>
       )}
-      <pre className={`bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-4 overflow-x-auto text-sm ${lang ? "rounded-b-lg" : "rounded-lg"}`}>
-        <code className={`font-[var(--font-mono)] ${className || ""}`}>{text}</code>
-      </pre>
+      {previewing && isHtml ? (
+        <Suspense fallback={<div className="p-4 text-sm text-[var(--color-text-muted)]">Loading preview...</div>}>
+          <HtmlPreview content={text} />
+        </Suspense>
+      ) : (
+        <pre className={`bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-4 overflow-x-auto text-sm ${lang ? "rounded-b-lg" : "rounded-lg"}`}>
+          <code className={`font-[var(--font-mono)] ${className || ""}`}>{text}</code>
+        </pre>
+      )}
       {!lang && (
         <button
           onClick={handleCopy}
