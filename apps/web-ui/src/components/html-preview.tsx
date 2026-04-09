@@ -4,7 +4,19 @@ import { useRef, useEffect, useState } from "react";
 
 const CHART_JS_CDN = "https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js";
 
+// CSP: allow only the Chart.js CDN and inline scripts/styles. Block all other network.
+const CSP = [
+  "default-src 'none'",
+  `script-src 'unsafe-inline' ${CHART_JS_CDN.replace(/\/chart\.umd\.min\.js$/, "/")}`,
+  "style-src 'unsafe-inline'",
+  "img-src data:",
+  "connect-src 'none'",
+  "font-src 'none'",
+  "frame-src 'none'",
+].join("; ");
+
 const INJECTED_HEAD = `
+<meta http-equiv="Content-Security-Policy" content="${CSP}">
 <script src="${CHART_JS_CDN}"><\/script>
 <style>
   * { box-sizing: border-box; }
@@ -77,12 +89,12 @@ function buildSrcDoc(content: string): string {
   const lower = content.toLowerCase();
 
   // If the content already has a <head>, inject our styles/scripts into it
-  if (lower.includes("<head>")) {
-    return content.replace(/<head>/i, `<head>${INJECTED_HEAD}`);
+  if (lower.includes("<head")) {
+    return content.replace(/<head[^>]*>/i, `$&${INJECTED_HEAD}`);
   }
 
   // If it has <html> but no <head>, add one
-  if (lower.includes("<html>")) {
+  if (lower.includes("<html")) {
     return content.replace(/<html[^>]*>/i, `$&<head>${INJECTED_HEAD}</head>`);
   }
 
