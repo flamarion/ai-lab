@@ -2,9 +2,6 @@
 
 import { useRef, useEffect, useState } from "react";
 
-// Read Chart.js UMD bundle at build time so it can be injected into sandboxed iframes.
-// Using require() with fs is not viable in a client component, so we import the UMD
-// bundle as a static asset via a raw string. Next.js will inline this at build time.
 const CHART_JS_CDN = "https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js";
 
 const INJECTED_HEAD = `

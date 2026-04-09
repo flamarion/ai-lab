@@ -1,11 +1,10 @@
 "use client";
 
 import { type ToolUsed, type FileAttachment } from "@/lib/api";
-import { Wrench, ListChecks, ChevronDown, ChevronUp, Copy, Check } from "lucide-react";
+import { Wrench, ListChecks, ChevronDown, ChevronUp, Copy, Check, Eye, Code } from "lucide-react";
 import FileIcon from "@/components/file-icon";
 import { useState, useCallback, lazy, Suspense } from "react";
 import ReactMarkdown from "react-markdown";
-import { Eye, Code } from "lucide-react";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 
