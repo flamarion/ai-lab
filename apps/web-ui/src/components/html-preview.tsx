@@ -7,7 +7,7 @@ const CHART_JS_CDN = "https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min
 // CSP: allow only the Chart.js CDN and inline scripts/styles. Block all other network.
 const CSP = [
   "default-src 'none'",
-  `script-src 'unsafe-inline' ${CHART_JS_CDN.replace(/\/chart\.umd\.min\.js$/, "/")}`,
+  "script-src 'unsafe-inline' https://cdn.jsdelivr.net",
   "style-src 'unsafe-inline'",
   "img-src data:",
   "connect-src 'none'",
@@ -36,7 +36,9 @@ const INJECTED_HEAD = `
     window.parent.postMessage({ type: "resize", height: h }, "*");
   };
   window.addEventListener("load", () => setTimeout(_notifyHeight, 100));
-  new MutationObserver(_notifyHeight).observe(document.body, { childList: true, subtree: true, attributes: true });
+  document.addEventListener("DOMContentLoaded", () => {
+    new MutationObserver(_notifyHeight).observe(document.body, { childList: true, subtree: true, attributes: true });
+  });
 <\/script>
 `;
 
