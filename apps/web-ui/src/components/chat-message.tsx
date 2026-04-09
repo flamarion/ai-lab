@@ -29,10 +29,10 @@ function formatSize(bytes: number): string {
 
 function CodeBlock({ className, children }: { className?: string; children: React.ReactNode }) {
   const [copied, setCopied] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
   const text = String(children).replace(/\n$/, "");
   const lang = className?.replace("language-", "") || "";
   const isHtml = lang === "html";
+  const [previewing, setPreviewing] = useState(isHtml);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(text);
